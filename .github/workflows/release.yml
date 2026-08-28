@@ -41,8 +41,13 @@ jobs:
           }
           $assetPaths = @($assets | ForEach-Object { $_.FullName })
 
+          $savedErrorActionPreference = $ErrorActionPreference
+          $ErrorActionPreference = 'SilentlyContinue'
           gh release view $tag --repo $repository 1>$null 2>$null
-          if ($LASTEXITCODE -eq 0) {
+          $releaseExists = $LASTEXITCODE -eq 0
+          $ErrorActionPreference = $savedErrorActionPreference
+
+          if ($releaseExists) {
             gh release upload $tag @assetPaths --clobber --repo $repository
           } else {
             gh release create $tag @assetPaths --verify-tag --generate-notes `
