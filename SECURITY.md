@@ -10,19 +10,21 @@ The launcher assumes the following local components are trusted:
 
 - this launcher directory and its `launcher.config.json` file;
 - the configured DeepSeek Harness source checkout and installed dependencies;
-- the configured `node.exe` and `msedge.exe` binaries;
+- the configured `node.exe` and installed Microsoft WebView2 Runtime;
 - the current Windows user account.
 
 First-run setup additionally trusts the official DeepSeek Harness GitHub repository, the exact commit cloned from it, the package-manager version declared by that commit, its lockfile, and the registries referenced by that lockfile.
 
 When the user opts into portable Node.js installation, setup additionally trusts `https://nodejs.org/dist/`, its release index, checksum manifest, and selected LTS ZIP.
 
+When WebView2 is missing, setup downloads Microsoft's Evergreen Bootstrapper and requires a valid Microsoft Authenticode signature before executing it.
+
 It is designed to reduce accidental exposure to the network and accidental termination of unrelated processes. It does not defend against malware or another process already running with the same user's privileges.
 
 ## Security boundaries
 
 - Setup uses a hard-coded HTTPS URL for the official DeepSeek Harness repository and verifies the cloned `origin` and 40-character commit hash.
-- User-selected installation roots must be absolute local-drive paths. Network paths and existing Harness destinations are rejected.
+- User-selected installation roots must be absolute local-drive paths. Network paths are rejected. Existing Harness directories are adopted only after source-layout and official Git-origin verification.
 - Portable Node.js is downloaded only from the exact `nodejs.org` HTTPS host. Setup selects a compatible official LTS ZIP, enforces x64/ARM64 and size/path boundaries, and verifies SHA-256 against that release's official `SHASUMS256.txt` before extraction.
 - Portable Node.js stays under the user-selected root and is referenced by absolute path. Setup does not add it to the user or machine `PATH`.
 - Non-interactive full installation requires `-AcceptUpstreamScripts`; interactive installation displays the exact repository and target paths before cloning or running dependencies.
@@ -32,11 +34,11 @@ It is designed to reduce accidental exposure to the network and accidental termi
 - Only a strict loopback trust URL is accepted from Harness output.
 - Trust tokens and API keys are never written by the launcher to disk.
 - Diagnostic text is truncated and redacts the trust token and common `sk-...` keys.
-- The temporary Edge profile is created under `<DataDir>\desktop-launcher` and removed only after validating its exact parent and per-process name.
-- The launcher stops only the Node process it created after confirming the executable path, plus that process's descendants.
-- Edge cleanup matches the unique per-run `--user-data-dir` argument.
+- WebView2 disables developer tools, password saving, autofill, permission grants, default context menus, and in-window navigation outside the exact loopback origin.
+- The temporary WebView2 user-data folder is created under `<DataDir>\desktop-launcher` and removed only after validating its exact parent and per-process name.
+- The Node process is assigned to a Windows Job Object with `KILL_ON_JOB_CLOSE`, so its process tree is terminated with the desktop host.
 - Installer inputs must be absolute paths. Existing configuration and shortcuts are not replaced without `-Force`.
-- The uninstaller validates shortcut ownership and never removes Harness source, session data, runtimes, or environment variables.
+- The uninstaller validates shortcut ownership. Harness, portable Node.js, and data are preserved by default and can be selected only when the configuration records them as installer-managed; data deletion requires secondary confirmation.
 - One-click launcher removal waits for and validates its own uninstaller process, verifies package markers, and deletes only a fixed allowlist of launcher files. Unknown files and Git metadata are retained.
 
 ## Known limitations
@@ -49,7 +51,7 @@ The default setup follows the current upstream default branch, which can change.
 
 Dependency auditing can report upstream advisories. Setup displays a warning but does not modify DeepSeek Harness dependencies or claim that reported code is unreachable. Review the audit output and the upstream project's response before sensitive use.
 
-The local trust URL is briefly visible in the command line of the Edge process. A different process with the same Windows user's privileges may be able to inspect it. Do not run untrusted software in the same account while handling sensitive sessions.
+The local trust URL is passed to the WebView2 control in process memory. Another process with the same Windows user's privileges can still inspect memory or interfere with the local session. Do not run untrusted software in the same account while handling sensitive sessions.
 
 The launcher runs code from the configured Harness checkout and its `node_modules`. Review updates, use the official upstream repository, and pin a known commit for higher-assurance deployments.
 

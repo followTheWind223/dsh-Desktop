@@ -1,10 +1,15 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 
 [CmdletBinding()]
 param(
   [string]$ShortcutPath,
+  [switch]$RemoveDesktopShortcut,
+  [switch]$RemoveStartMenuShortcut,
   [switch]$RemoveConfig,
   [switch]$RemoveLauncherFiles,
+  [switch]$RemoveManagedHarness,
+  [switch]$RemoveManagedNode,
+  [switch]$RemoveManagedData,
   [ValidateRange(0, 2147483647)][int]$WaitForProcessId = 0,
   [switch]$ShowCompletion
 )
@@ -14,188 +19,233 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 
 function Show-UninstallMessage {
-  param(
-    [Parameter(Mandatory = $true)][string]$Message,
-    [Parameter(Mandatory = $true)][string]$Title,
-    [Parameter(Mandatory = $true)][System.Windows.Forms.MessageBoxIcon]$Icon
-  )
-
+  param([string]$Chinese, [string]$English, [System.Windows.Forms.MessageBoxIcon]$Icon)
   if (-not $ShowCompletion) { return }
+  $isChinese = [System.Globalization.CultureInfo]::CurrentUICulture.Name.StartsWith('zh', [System.StringComparison]::OrdinalIgnoreCase)
   [System.Windows.Forms.MessageBox]::Show(
-    $Message,
-    $Title,
+    $(if ($isChinese) { $Chinese } else { $English }),
+    $(if ($isChinese) { 'DSH Desktop 卸载' } else { 'DSH Desktop Uninstall' }),
     [System.Windows.Forms.MessageBoxButtons]::OK,
     $Icon
   ) | Out-Null
 }
 
+function Get-SafeLocalPath {
+  param([Parameter(Mandatory = $true)][string]$Value, [Parameter(Mandatory = $true)][string]$Name)
+  if ([string]::IsNullOrWhiteSpace($Value) -or -not [System.IO.Path]::IsPathRooted($Value)) { throw "$Name is not an absolute path." }
+  $full = [System.IO.Path]::GetFullPath($Value).TrimEnd('\')
+  $drive = [System.IO.Path]::GetPathRoot($full).TrimEnd('\')
+  if ($full.StartsWith('\\', [System.StringComparison]::Ordinal) -or
+      [string]::Equals($full, $drive, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing an unsafe $Name path: $full"
+  }
+  return $full
+}
+
+function Assert-SeparateFromLauncher {
+  param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$LauncherRoot)
+  $pathPrefix = $Path.TrimEnd('\') + '\'
+  $launcherPrefix = $LauncherRoot.TrimEnd('\') + '\'
+  if ([string]::Equals($Path, $LauncherRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+      $Path.StartsWith($launcherPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
+      $LauncherRoot.StartsWith($pathPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to remove a component that overlaps the launcher directory: $Path"
+  }
+}
+
+function Remove-OwnedDirectory {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][string]$ExpectedLeaf,
+    [Parameter(Mandatory = $true)][string]$LauncherRoot,
+    [string[]]$RequiredMarkers = @()
+  )
+  $full = Get-SafeLocalPath -Value $Path -Name $ExpectedLeaf
+  Assert-SeparateFromLauncher -Path $full -LauncherRoot $LauncherRoot
+  if (-not [string]::Equals((Split-Path -Leaf $full), $ExpectedLeaf, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to remove a component with an unexpected directory name: $full"
+  }
+  if (-not (Test-Path -LiteralPath $full -PathType Container)) { return }
+  foreach ($marker in $RequiredMarkers) {
+    if (-not (Test-Path -LiteralPath (Join-Path $full $marker))) { throw "Refusing component removal because a marker is missing: $marker" }
+  }
+  Remove-Item -LiteralPath $full -Recurse -Force
+  Write-Output "Removed managed component: $full"
+}
+
+function Remove-OwnedNode {
+  param([Parameter(Mandatory = $true)][string]$NodePath, [Parameter(Mandatory = $true)][string]$LauncherRoot)
+  $nodeExecutable = Get-SafeLocalPath -Value $NodePath -Name 'NodePath'
+  if (-not [string]::Equals((Split-Path -Leaf $nodeExecutable), 'node.exe', [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to remove an unexpected Node path: $nodeExecutable"
+  }
+  $versionDirectory = Split-Path -Parent $nodeExecutable
+  $versionLeaf = Split-Path -Leaf $versionDirectory
+  if ($versionLeaf -notmatch '^node-v\d+\.\d+\.\d+-win-(x64|arm64)$') {
+    throw "Refusing to remove an unexpected portable Node directory: $versionDirectory"
+  }
+  $nodeRoot = Split-Path -Parent $versionDirectory
+  if (-not [string]::Equals((Split-Path -Leaf $nodeRoot), 'nodejs', [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to remove Node outside a nodejs directory: $versionDirectory"
+  }
+  Assert-SeparateFromLauncher -Path $versionDirectory -LauncherRoot $LauncherRoot
+  if (Test-Path -LiteralPath $versionDirectory -PathType Container) {
+    if (-not (Test-Path -LiteralPath $nodeExecutable -PathType Leaf)) { throw 'Refusing portable Node removal because node.exe is missing.' }
+    Remove-Item -LiteralPath $versionDirectory -Recurse -Force
+    Write-Output "Removed managed portable Node.js: $versionDirectory"
+  }
+  if ((Test-Path -LiteralPath $nodeRoot -PathType Container) -and @(Get-ChildItem -LiteralPath $nodeRoot -Force).Count -eq 0) {
+    Remove-Item -LiteralPath $nodeRoot -Force
+  }
+}
+
+function Remove-OwnedShortcut {
+  param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$ExpectedTarget)
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return }
+  $shell = New-Object -ComObject WScript.Shell
+  try {
+    $shortcut = $shell.CreateShortcut($Path)
+    if (-not [string]::Equals(
+        [System.IO.Path]::GetFullPath($shortcut.TargetPath),
+        [System.IO.Path]::GetFullPath($ExpectedTarget),
+        [System.StringComparison]::OrdinalIgnoreCase)) {
+      Write-Warning "An unrelated shortcut was left unchanged: $Path"
+      return
+    }
+  } finally {
+    [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+  }
+  Remove-Item -LiteralPath $Path -Force
+  Write-Output "Removed shortcut: $Path"
+}
+
 function Remove-EmptyDirectory {
   param([Parameter(Mandatory = $true)][string]$Path)
-
-  if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return }
-  if (@(Get-ChildItem -LiteralPath $Path -Force).Count -eq 0) {
+  if ((Test-Path -LiteralPath $Path -PathType Container) -and @(Get-ChildItem -LiteralPath $Path -Force).Count -eq 0) {
     Remove-Item -LiteralPath $Path -Force
   }
 }
 
 function Remove-KnownLauncherFiles {
-  if (-not $RemoveConfig) {
-    throw 'RemoveLauncherFiles requires RemoveConfig so local path configuration is not left behind.'
-  }
-
-  $launcherRoot = [System.IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
-  $driveRoot = [System.IO.Path]::GetPathRoot($launcherRoot)
-  if ($launcherRoot.StartsWith('\\', [System.StringComparison]::Ordinal) -or
-      [string]::Equals($launcherRoot, $driveRoot.TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "Refusing to remove launcher files from an unsafe directory: $launcherRoot"
-  }
-
-  foreach ($marker in @('DeepSeek-Harness-Desktop.ps1', 'DSH-Desktop.exe', 'Uninstall-DSH-Desktop.exe', 'VERSION')) {
-    if (-not (Test-Path -LiteralPath (Join-Path $launcherRoot $marker) -PathType Leaf)) {
+  param([Parameter(Mandatory = $true)][string]$LauncherRoot)
+  if (-not $RemoveConfig) { throw 'RemoveLauncherFiles requires RemoveConfig.' }
+  foreach ($marker in @('DSH-Desktop.exe', 'DSH-Setup.exe', 'Uninstall-DSH-Desktop.exe', 'VERSION')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $LauncherRoot $marker) -PathType Leaf)) {
       throw "Refusing launcher cleanup because a package marker is missing: $marker"
     }
   }
-  $versionText = (Get-Content -LiteralPath (Join-Path $launcherRoot 'VERSION') -Raw).Trim()
-  if ($versionText -notmatch '^\d+\.\d+\.\d+$') {
-    throw 'Refusing launcher cleanup because VERSION is invalid.'
-  }
-
   $knownFiles = @(
-    '.gitattributes',
-    '.gitignore',
-    '.github\workflows\release.yml',
-    'Build-Exe.ps1',
-    'Build-Release.ps1',
-    'CHANGELOG.md',
-    'CONTRIBUTING.md',
-    'DeepSeek-Harness-Desktop.ps1',
-    'DSH-Desktop.exe',
-    'Install.ps1',
-    'LICENSE',
-    'README.md',
-    'SECURITY.md',
-    'SHA256SUMS.txt',
-    'Setup.ps1',
-    'Test-Release.ps1',
-    'THIRD_PARTY_NOTICES.md',
-    'Uninstall-DSH-Desktop.exe',
-    'Uninstall.ps1',
-    'VERSION',
-    'launcher.config.example.json',
-    'assets\deepseek-harness.ico',
-    'assets\deepseek-harness.svg',
-    'src\DSH-Desktop\Program.cs',
-    'src\DSH-Desktop\UninstallProgram.cs'
+    '.gitattributes', '.gitignore', '.github\workflows\release.yml',
+    'Build-Exe.ps1', 'Build-Setup.ps1', 'Build-Release.ps1', 'Test-Release.ps1',
+    'CHANGELOG.md', 'CONTRIBUTING.md', 'DeepSeek-Harness-Desktop.ps1',
+    'DSH-Desktop.exe', 'DSH-Desktop.exe.config', 'DSH-Setup.exe', 'Uninstall-DSH-Desktop.exe',
+    'Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll',
+    'Install.ps1', 'Setup.ps1', 'Setup-GUI.ps1', 'Ensure-WebView2.ps1', 'Uninstall.ps1',
+    'LICENSE', 'README.md', 'SECURITY.md', 'SHA256SUMS.txt', 'THIRD_PARTY_NOTICES.md', 'VERSION',
+    'launcher.config.example.json', 'launcher.config.json',
+    'assets\deepseek-harness.ico', 'assets\deepseek-harness.svg',
+    'runtimes\win-x86\native\WebView2Loader.dll',
+    'runtimes\win-x64\native\WebView2Loader.dll',
+    'runtimes\win-arm64\native\WebView2Loader.dll',
+    'src\DSH-Desktop\AppConfiguration.cs', 'src\DSH-Desktop\AssemblyInfo.cs',
+    'src\DSH-Desktop\BackendHost.cs', 'src\DSH-Desktop\DiagnosticText.cs',
+    'src\DSH-Desktop\DSH-Desktop.csproj', 'src\DSH-Desktop\Localizer.cs',
+    'src\DSH-Desktop\MainForm.cs', 'src\DSH-Desktop\NativeJob.cs',
+    'src\DSH-Desktop\packages.lock.json', 'src\DSH-Desktop\Program.cs',
+    'src\DSH-Desktop\UninstallProgram.cs', 'src\DSH-Setup\SetupProgram.cs'
   )
-  foreach ($relativePath in $knownFiles) {
-    $knownPath = [System.IO.Path]::GetFullPath((Join-Path $launcherRoot $relativePath))
-    $rootPrefix = $launcherRoot + '\'
-    if (-not $knownPath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-      throw "Refusing an unsafe launcher cleanup path: $relativePath"
-    }
-    if (Test-Path -LiteralPath $knownPath -PathType Leaf) {
-      Remove-Item -LiteralPath $knownPath -Force
-    }
+  $rootPrefix = $LauncherRoot + '\'
+  foreach ($relative in $knownFiles) {
+    $knownPath = [System.IO.Path]::GetFullPath((Join-Path $LauncherRoot $relative))
+    if (-not $knownPath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) { throw "Unsafe cleanup path: $relative" }
+    if (Test-Path -LiteralPath $knownPath -PathType Leaf) { Remove-Item -LiteralPath $knownPath -Force }
   }
-
-  Remove-EmptyDirectory -Path (Join-Path $launcherRoot 'assets')
-  Remove-EmptyDirectory -Path (Join-Path $launcherRoot '.github\workflows')
-  Remove-EmptyDirectory -Path (Join-Path $launcherRoot '.github')
-  Remove-EmptyDirectory -Path (Join-Path $launcherRoot 'src\DSH-Desktop')
-  Remove-EmptyDirectory -Path (Join-Path $launcherRoot 'src')
-
-  $remainingCount = if (Test-Path -LiteralPath $launcherRoot -PathType Container) {
-    @(Get-ChildItem -LiteralPath $launcherRoot -Force).Count
-  } else {
-    0
+  foreach ($directory in @(
+      'runtimes\win-x86\native', 'runtimes\win-x86', 'runtimes\win-x64\native', 'runtimes\win-x64',
+      'runtimes\win-arm64\native', 'runtimes\win-arm64', 'runtimes', 'assets',
+      '.github\workflows', '.github', 'src\DSH-Setup', 'src\DSH-Desktop', 'src'
+    )) { Remove-EmptyDirectory -Path (Join-Path $LauncherRoot $directory) }
+  $remaining = if (Test-Path -LiteralPath $LauncherRoot -PathType Container) { @(Get-ChildItem -LiteralPath $LauncherRoot -Force).Count } else { 0 }
+  if ($remaining -eq 0 -and -not [string]::Equals((Get-Location).Path.TrimEnd('\'), $LauncherRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    Remove-Item -LiteralPath $LauncherRoot -Force
   }
-  if ($remainingCount -eq 0 -and
-      -not [string]::Equals((Get-Location).Path.TrimEnd('\'), $launcherRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-    Remove-Item -LiteralPath $launcherRoot -Force
-  }
-  return $remainingCount
+  return $remaining
 }
 
 try {
-  if ($RemoveLauncherFiles -and -not $RemoveConfig) {
-    throw 'RemoveLauncherFiles requires RemoveConfig so local path configuration is not left behind.'
+  if ($RemoveLauncherFiles -and -not $RemoveConfig) { throw 'RemoveLauncherFiles requires RemoveConfig.' }
+  $launcherRoot = Get-SafeLocalPath -Value $PSScriptRoot -Name 'launcher directory'
+  $configPath = Join-Path $launcherRoot 'launcher.config.json'
+  $config = $null
+  if (Test-Path -LiteralPath $configPath -PathType Leaf) {
+    $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ([int]$config.SchemaVersion -ne 2) { throw 'The launcher configuration schema is invalid.' }
   }
+  if (($RemoveManagedHarness -or $RemoveManagedNode -or $RemoveManagedData) -and $null -eq $config) {
+    throw 'Managed components cannot be removed because launcher.config.json is missing.'
+  }
+
   if ($WaitForProcessId -gt 0) {
     if (-not $RemoveLauncherFiles) { throw 'WaitForProcessId is valid only with RemoveLauncherFiles.' }
-    $uninstallerPath = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'Uninstall-DSH-Desktop.exe'))
-    $uninstallerProcess = Get-Process -Id $WaitForProcessId -ErrorAction SilentlyContinue
-    if ($null -ne $uninstallerProcess) {
-      if (-not [string]::Equals($uninstallerProcess.Path, $uninstallerPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+    $expectedUninstaller = Join-Path $launcherRoot 'Uninstall-DSH-Desktop.exe'
+    $process = Get-Process -Id $WaitForProcessId -ErrorAction SilentlyContinue
+    if ($null -ne $process) {
+      if (-not [string]::Equals($process.Path, $expectedUninstaller, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw 'Refusing to wait for a process that is not this package uninstaller.'
       }
       Wait-Process -Id $WaitForProcessId -Timeout 30
     }
   }
 
-  if ([string]::IsNullOrWhiteSpace($ShortcutPath)) {
-    $ShortcutPath = Join-Path ([Environment]::GetFolderPath('Desktop')) 'DeepSeek Harness.lnk'
+  $entryExecutable = Join-Path $launcherRoot 'DSH-Desktop.exe'
+  $desktopPath = Join-Path ([Environment]::GetFolderPath('Desktop')) 'DeepSeek Harness.lnk'
+  $startMenuDirectory = Join-Path ([Environment]::GetFolderPath('Programs')) 'DSH Desktop'
+  $startMenuPath = Join-Path $startMenuDirectory 'DeepSeek Harness.lnk'
+  if ($RemoveDesktopShortcut -or (-not $RemoveStartMenuShortcut -and [string]::IsNullOrWhiteSpace($ShortcutPath))) {
+    Remove-OwnedShortcut -Path $desktopPath -ExpectedTarget $entryExecutable
   }
-  if (-not [System.IO.Path]::IsPathRooted($ShortcutPath)) {
-    throw 'ShortcutPath must be an absolute path.'
+  if ($RemoveStartMenuShortcut) {
+    Remove-OwnedShortcut -Path $startMenuPath -ExpectedTarget $entryExecutable
+    Remove-EmptyDirectory -Path $startMenuDirectory
   }
-  $ShortcutPath = [System.IO.Path]::GetFullPath($ShortcutPath)
-  if (-not [string]::Equals([System.IO.Path]::GetExtension($ShortcutPath), '.lnk', [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw 'ShortcutPath must end in .lnk.'
-  }
-
-  $launcherScript = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'DeepSeek-Harness-Desktop.ps1'))
-  $entryExecutable = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'DSH-Desktop.exe'))
-  if (Test-Path -LiteralPath $ShortcutPath -PathType Leaf) {
-    $shell = New-Object -ComObject WScript.Shell
-    $shortcut = $shell.CreateShortcut($ShortcutPath)
-    $expectedArgument = '-File "' + $launcherScript + '"'
-    $isExeShortcut = $false
-    if (-not [string]::IsNullOrWhiteSpace($shortcut.TargetPath)) {
-      $isExeShortcut = [string]::Equals(
-        [System.IO.Path]::GetFullPath($shortcut.TargetPath),
-        $entryExecutable,
-        [System.StringComparison]::OrdinalIgnoreCase
-      )
-    }
-    $isLegacyShortcut = $shortcut.Arguments.IndexOf(
-      $expectedArgument,
-      [System.StringComparison]::OrdinalIgnoreCase
-    ) -ge 0
-    if (-not $isExeShortcut -and -not $isLegacyShortcut) {
-      throw "Refusing to remove a shortcut not owned by this launcher: $ShortcutPath"
-    }
-    Remove-Item -LiteralPath $ShortcutPath -Force
-    Write-Output ("Removed shortcut: {0}" -f $ShortcutPath)
-  } else {
-    Write-Output ("Shortcut was not present: {0}" -f $ShortcutPath)
+  if (-not [string]::IsNullOrWhiteSpace($ShortcutPath)) {
+    Remove-OwnedShortcut -Path (Get-SafeLocalPath -Value $ShortcutPath -Name 'ShortcutPath') -ExpectedTarget $entryExecutable
   }
 
-  if ($RemoveConfig) {
-    $configPath = Join-Path $PSScriptRoot 'launcher.config.json'
-    if (Test-Path -LiteralPath $configPath -PathType Leaf) {
-      Remove-Item -LiteralPath $configPath -Force
-      Write-Output ("Removed configuration: {0}" -f $configPath)
-    }
+  if ($RemoveManagedHarness) {
+    if (-not [bool]$config.HarnessManaged) { throw 'Harness is not marked as installer-managed; it will not be removed.' }
+    Remove-OwnedDirectory -Path ([string]$config.HarnessDir) -ExpectedLeaf 'deepseek-harness' -LauncherRoot $launcherRoot -RequiredMarkers @('package.json', 'apps\cli\src\bin.ts')
+  }
+  if ($RemoveManagedNode) {
+    if (-not [bool]$config.NodeManaged) { throw 'Node.js is not marked as installer-managed; it will not be removed.' }
+    Remove-OwnedNode -NodePath ([string]$config.NodePath) -LauncherRoot $launcherRoot
+  }
+  if ($RemoveManagedData) {
+    if (-not [bool]$config.DataManaged) { throw 'Data is not marked as installer-managed; it will not be removed.' }
+    Remove-OwnedDirectory -Path ([string]$config.DataDir) -ExpectedLeaf 'deepseek-harness-data' -LauncherRoot $launcherRoot
   }
 
-  $remainingLauncherItems = $null
-  if ($RemoveLauncherFiles) {
-    $remainingLauncherItems = Remove-KnownLauncherFiles
+  if ($RemoveConfig -and (Test-Path -LiteralPath $configPath -PathType Leaf)) {
+    Remove-Item -LiteralPath $configPath -Force
+    Write-Output "Removed configuration: $configPath"
   }
+  $remaining = $null
+  if ($RemoveLauncherFiles) { $remaining = Remove-KnownLauncherFiles -LauncherRoot $launcherRoot }
 
-  $message = 'Harness source code, session data, portable Node.js, Edge, and environment variables were not changed.'
-  if ($RemoveLauncherFiles) {
-    if ($remainingLauncherItems -eq 0) {
-      $message = "DSH Desktop launcher files were removed.`n`n$message"
-    } else {
-      $message = "Known DSH Desktop launcher files were removed. The launcher folder was kept because it contains $remainingLauncherItems unrecognized item(s).`n`n$message"
-    }
-  }
-  Write-Output $message
-  Show-UninstallMessage -Title 'DSH Desktop uninstalled' -Message $message -Icon Information
+  $english = if ($RemoveLauncherFiles -and $remaining -eq 0) {
+    'DSH Desktop was removed. Components that were not explicitly selected were preserved.'
+  } elseif ($RemoveLauncherFiles) {
+    "Known DSH Desktop files were removed. The folder was kept because it contains $remaining unrecognized item(s)."
+  } else { 'Selected shortcuts and configuration were removed.' }
+  $chinese = if ($RemoveLauncherFiles -and $remaining -eq 0) {
+    'DSH Desktop 已卸载。未明确勾选的组件均已保留。'
+  } elseif ($RemoveLauncherFiles) {
+    "已删除已知桌面端文件。目录中仍有 $remaining 个未识别项目，因此保留了该目录。"
+  } else { '已删除所选快捷方式和配置。' }
+  Write-Output $english
+  Show-UninstallMessage -Chinese $chinese -English $english -Icon Information
 } catch {
-  $message = $_.Exception.Message
-  Write-Error $message -ErrorAction Continue
-  Show-UninstallMessage -Title 'DSH Desktop uninstall failed' -Message $message -Icon Error
+  Write-Error $_.Exception.Message -ErrorAction Continue
+  Show-UninstallMessage -Chinese ('卸载失败：' + $_.Exception.Message) -English ('Uninstall failed: ' + $_.Exception.Message) -Icon Error
   exit 1
 }

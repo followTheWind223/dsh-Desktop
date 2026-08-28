@@ -9,5 +9,7 @@ launcher.config.json
 *.tmp
 *.zip
 /artifacts/
+**/bin/
+**/obj/
 .DS_Store
 Thumbs.db

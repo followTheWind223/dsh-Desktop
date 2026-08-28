@@ -1,125 +1,102 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.Reflection;
+using System.Threading;
 using System.Windows.Forms;
 
-[assembly: AssemblyTitle("DSH Desktop")]
-[assembly: AssemblyDescription("Unofficial Windows desktop entry point for DeepSeek Harness")]
-[assembly: AssemblyCompany("DSH Desktop contributors")]
-[assembly: AssemblyProduct("DSH Desktop")]
-[assembly: AssemblyCopyright("Copyright (c) 2026 DSH Desktop contributors")]
-[assembly: AssemblyVersion("0.3.0.0")]
-[assembly: AssemblyFileVersion("0.3.0.0")]
-
-internal static class Program
+namespace DSHDesktop
 {
-    private const int SetupCancelledExitCode = 2;
-
-    [STAThread]
-    private static int Main()
+    internal static class Program
     {
-        Application.EnableVisualStyles();
-        Application.SetCompatibleTextRenderingDefault(false);
+        private const string LegacyMutexName = "Local\\DeepSeekHarnessOfficialDesktopLauncher";
 
-        try
+        [STAThread]
+        private static int Main(string[] args)
         {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+
             string baseDirectory = Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory);
             string configPath = Path.Combine(baseDirectory, "launcher.config.json");
-            string setupScript = Path.Combine(baseDirectory, "Setup.ps1");
-            string launcherScript = Path.Combine(baseDirectory, "DeepSeek-Harness-Desktop.ps1");
+            Localizer localizer = Localizer.FromSystem();
 
-            RequireFile(launcherScript, "The launcher script is missing.");
-
-            if (!File.Exists(configPath))
+            try
             {
-                RequireFile(setupScript, "The setup script is missing.");
-                int setupExitCode = RunPowerShell(setupScript, false, true);
-                if (setupExitCode == SetupCancelledExitCode)
-                {
-                    return 0;
-                }
-                if (setupExitCode != 0)
-                {
-                    return setupExitCode;
-                }
                 if (!File.Exists(configPath))
                 {
-                    ShowError("Setup completed without creating launcher.config.json.");
-                    return 1;
+                    return LaunchSetup(baseDirectory, localizer);
                 }
+
+                LauncherConfiguration configuration = LauncherConfiguration.Load(configPath);
+                localizer = Localizer.Create(configuration.Language);
+                configuration.Validate(localizer);
+
+                bool createdNew;
+                using (Mutex mutex = new Mutex(true, LegacyMutexName, out createdNew))
+                {
+                    if (!createdNew)
+                    {
+                        MessageBox.Show(
+                            localizer.Text("DSH Desktop 已经在运行。", "DSH Desktop is already running."),
+                            "DSH Desktop",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Information
+                        );
+                        return 0;
+                    }
+
+                    Application.Run(new MainForm(configuration, localizer));
+                    GC.KeepAlive(mutex);
+                }
+                return 0;
+            }
+            catch (Exception exception)
+            {
+                MessageBox.Show(
+                    DiagnosticText.Redact(exception.Message),
+                    localizer.Text("DSH Desktop 启动失败", "DSH Desktop failed to start"),
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error
+                );
+                return 1;
+            }
+        }
+
+        private static int LaunchSetup(string baseDirectory, Localizer localizer)
+        {
+            string setupExecutable = Path.Combine(baseDirectory, "DSH-Setup.exe");
+            if (!File.Exists(setupExecutable))
+            {
+                MessageBox.Show(
+                    localizer.Text(
+                        "尚未配置 DSH Desktop，并且当前文件夹中缺少 DSH-Setup.exe。请重新解压完整安装包。",
+                        "DSH Desktop is not configured and DSH-Setup.exe is missing. Extract the complete package and try again."
+                    ),
+                    "DSH Desktop",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning
+                );
+                return 1;
             }
 
-            RunPowerShell(launcherScript, true, false);
-            return 0;
-        }
-        catch (Exception exception)
-        {
-            ShowError(exception.Message);
-            return 1;
-        }
-    }
-
-    private static int RunPowerShell(string scriptPath, bool hidden, bool waitForExit)
-    {
-        string powerShellPath = Path.Combine(
-            Environment.SystemDirectory,
-            @"WindowsPowerShell\v1.0\powershell.exe"
-        );
-        RequireFile(powerShellPath, "Windows PowerShell 5.1 was not found.");
-
-        ProcessStartInfo startInfo = new ProcessStartInfo();
-        startInfo.FileName = powerShellPath;
-        startInfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -STA "
-            + (hidden ? "-WindowStyle Hidden " : "")
-            + "-File " + Quote(scriptPath);
-        startInfo.WorkingDirectory = Path.GetDirectoryName(scriptPath);
-        startInfo.UseShellExecute = false;
-        startInfo.CreateNoWindow = hidden;
-        startInfo.WindowStyle = hidden ? ProcessWindowStyle.Hidden : ProcessWindowStyle.Normal;
-
-        Process process = Process.Start(startInfo);
-        if (process == null)
-        {
-            throw new InvalidOperationException("Unable to start Windows PowerShell.");
-        }
-        if (!waitForExit)
-        {
-            process.Dispose();
+            ProcessStartInfo startInfo = new ProcessStartInfo
+            {
+                FileName = setupExecutable,
+                Arguments = "--portable-dir " + Quote(baseDirectory),
+                WorkingDirectory = baseDirectory,
+                UseShellExecute = true
+            };
+            Process.Start(startInfo);
             return 0;
         }
 
-        using (process)
+        private static string Quote(string value)
         {
-            process.WaitForExit();
-            return process.ExitCode;
+            if (value.IndexOf('"') >= 0)
+            {
+                throw new InvalidOperationException("A path contains an unsupported quote character.");
+            }
+            return "\"" + value + "\"";
         }
-    }
-
-    private static string Quote(string value)
-    {
-        if (value.IndexOf('"') >= 0)
-        {
-            throw new InvalidOperationException("A launcher path contains an unsupported quote character.");
-        }
-        return "\"" + value + "\"";
-    }
-
-    private static void RequireFile(string path, string message)
-    {
-        if (!File.Exists(path))
-        {
-            throw new FileNotFoundException(message, path);
-        }
-    }
-
-    private static void ShowError(string message)
-    {
-        MessageBox.Show(
-            message,
-            "DSH Desktop",
-            MessageBoxButtons.OK,
-            MessageBoxIcon.Error
-        );
     }
 }

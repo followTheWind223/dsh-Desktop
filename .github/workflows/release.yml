@@ -36,8 +36,8 @@ jobs:
           $tag = $env:GITHUB_REF_NAME
           $repository = $env:GITHUB_REPOSITORY
           $assets = @(Get-ChildItem -LiteralPath .\artifacts -File | Sort-Object Name)
-          if ($assets.Count -ne 2) {
-            throw "Expected exactly two release assets, found $($assets.Count)."
+          if ($assets.Count -lt 3) {
+            throw "Expected the setup EXE, portable ZIP, and checksum manifest; found $($assets.Count) assets."
           }
           $assetPaths = @($assets | ForEach-Object { $_.FullName })
 

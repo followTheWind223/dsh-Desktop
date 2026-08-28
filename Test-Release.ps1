@@ -2,117 +2,98 @@
 
 [CmdletBinding()]
 param(
-  [string]$LauncherPath,
-  [string]$UninstallerPath
+  [string]$PackageRoot
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+if ([string]::IsNullOrWhiteSpace($PackageRoot)) { $PackageRoot = $PSScriptRoot }
+if (-not [System.IO.Path]::IsPathRooted($PackageRoot)) { $PackageRoot = Join-Path $PSScriptRoot $PackageRoot }
+$PackageRoot = [System.IO.Path]::GetFullPath($PackageRoot).TrimEnd('\')
+if (-not (Test-Path -LiteralPath $PackageRoot -PathType Container)) { throw "PackageRoot does not exist: $PackageRoot" }
+
 $requiredFiles = @(
-  '.gitignore',
-  'Build-Exe.ps1',
-  'Build-Release.ps1',
-  'CHANGELOG.md',
-  'CONTRIBUTING.md',
-  'DeepSeek-Harness-Desktop.ps1',
-  'DSH-Desktop.exe',
-  'Install.ps1',
-  'LICENSE',
-  'README.md',
-  'SECURITY.md',
-  'Setup.ps1',
-  'THIRD_PARTY_NOTICES.md',
-  'Uninstall-DSH-Desktop.exe',
-  'Uninstall.ps1',
-  'VERSION',
-  'assets\deepseek-harness.ico',
-  'assets\deepseek-harness.svg',
-  'launcher.config.example.json',
-  'src\DSH-Desktop\Program.cs',
-  'src\DSH-Desktop\UninstallProgram.cs',
-  '.github\workflows\release.yml'
+  'DSH-Desktop.exe', 'DSH-Setup.exe', 'Uninstall-DSH-Desktop.exe', 'DSH-Desktop.exe.config',
+  'Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll',
+  'runtimes\win-x86\native\WebView2Loader.dll',
+  'runtimes\win-x64\native\WebView2Loader.dll',
+  'runtimes\win-arm64\native\WebView2Loader.dll',
+  'Install.ps1', 'Setup.ps1', 'Setup-GUI.ps1', 'Ensure-WebView2.ps1', 'Uninstall.ps1',
+  'CHANGELOG.md', 'LICENSE', 'README.md', 'SECURITY.md', 'THIRD_PARTY_NOTICES.md', 'VERSION',
+  'assets\deepseek-harness.ico', 'assets\deepseek-harness.svg'
 )
-
-foreach ($relativePath in $requiredFiles) {
-  $path = Join-Path $PSScriptRoot $relativePath
-  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-    throw "Required release file is missing: $relativePath"
-  }
+foreach ($relative in $requiredFiles) {
+  if (-not (Test-Path -LiteralPath (Join-Path $PackageRoot $relative) -PathType Leaf)) { throw "Required release file is missing: $relative" }
 }
-
-$localConfig = Join-Path $PSScriptRoot 'launcher.config.json'
-if (Test-Path -LiteralPath $localConfig) {
+if (Test-Path -LiteralPath (Join-Path $PackageRoot 'launcher.config.json')) {
   throw 'launcher.config.json contains local paths and must not be included in a release.'
 }
 
-foreach ($script in (Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1' -File)) {
+foreach ($script in (Get-ChildItem -LiteralPath $PackageRoot -Filter '*.ps1' -File)) {
   $tokens = $null
   $errors = $null
-  [void][System.Management.Automation.Language.Parser]::ParseFile(
-    $script.FullName,
-    [ref]$tokens,
-    [ref]$errors
-  )
+  [void][System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$errors)
   if ($errors.Count -gt 0) {
-    $messages = ($errors | ForEach-Object { $_.Message }) -join [Environment]::NewLine
-    throw "PowerShell parse failure in $($script.Name):`n$messages"
+    throw "PowerShell parse failure in $($script.Name):`n$(($errors | ForEach-Object Message) -join [Environment]::NewLine)"
   }
 }
 
-$iconPath = Join-Path $PSScriptRoot 'assets\deepseek-harness.ico'
-$iconBytes = [System.IO.File]::ReadAllBytes($iconPath)
-if ($iconBytes.Length -lt 6) { throw 'The Windows icon is truncated.' }
-if ([BitConverter]::ToUInt16($iconBytes, 0) -ne 0) { throw 'The Windows icon header is invalid.' }
-if ([BitConverter]::ToUInt16($iconBytes, 2) -ne 1) { throw 'The Windows icon type is invalid.' }
+$version = (Get-Content -LiteralPath (Join-Path $PackageRoot 'VERSION') -Raw).Trim()
+if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'VERSION is invalid.' }
+$expectedFileVersion = $version + '.0'
+
+function Assert-PortableExecutable {
+  param([Parameter(Mandatory = $true)][string]$RelativePath, [string]$ExpectedVersion)
+  $path = Join-Path $PackageRoot $RelativePath
+  $bytes = [System.IO.File]::ReadAllBytes($path)
+  if ($bytes.Length -lt 128 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw "$RelativePath has an invalid PE header." }
+  $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+  if ($peOffset -lt 0x40 -or $peOffset + 4 -gt $bytes.Length -or [BitConverter]::ToUInt32($bytes, $peOffset) -ne 0x00004550) {
+    throw "$RelativePath has an invalid PE signature."
+  }
+  if (-not [string]::IsNullOrWhiteSpace($ExpectedVersion)) {
+    $actual = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($path).FileVersion
+    if (-not [string]::Equals($actual, $ExpectedVersion, [System.StringComparison]::Ordinal)) {
+      throw "Unexpected $RelativePath version: $actual"
+    }
+  }
+}
+
+foreach ($relative in @('DSH-Desktop.exe', 'DSH-Setup.exe', 'Uninstall-DSH-Desktop.exe')) {
+  Assert-PortableExecutable -RelativePath $relative -ExpectedVersion $expectedFileVersion
+}
+foreach ($relative in @(
+    'runtimes\win-x86\native\WebView2Loader.dll',
+    'runtimes\win-x64\native\WebView2Loader.dll',
+    'runtimes\win-arm64\native\WebView2Loader.dll'
+  )) { Assert-PortableExecutable -RelativePath $relative }
+
+$setupAssemblyBytes = [System.IO.File]::ReadAllBytes((Join-Path $PackageRoot 'DSH-Setup.exe'))
+$setupAssembly = [System.Reflection.Assembly]::ReflectionOnlyLoad($setupAssemblyBytes)
+if ($setupAssembly.GetManifestResourceNames() -notcontains 'DSHDesktop.Payload.zip') {
+  throw 'DSH-Setup.exe does not contain the embedded installer payload.'
+}
+
+$iconBytes = [System.IO.File]::ReadAllBytes((Join-Path $PackageRoot 'assets\deepseek-harness.ico'))
+if ($iconBytes.Length -lt 6 -or [BitConverter]::ToUInt16($iconBytes, 0) -ne 0 -or [BitConverter]::ToUInt16($iconBytes, 2) -ne 1) {
+  throw 'The Windows icon is invalid.'
+}
 $imageCount = [BitConverter]::ToUInt16($iconBytes, 4)
 if ($imageCount -lt 1) { throw 'The Windows icon has no embedded images.' }
 
-function Assert-WindowsExecutable {
-  param(
-    [Parameter(Mandatory = $true)][string]$Path,
-    [Parameter(Mandatory = $true)][string]$DisplayName,
-    [Parameter(Mandatory = $true)][string]$ExpectedVersion
-  )
-
-  $exePath = if ([System.IO.Path]::IsPathRooted($Path)) {
-    [System.IO.Path]::GetFullPath($Path)
-  } else {
-    [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot $Path))
+$checksumFile = Join-Path $PackageRoot 'SHA256SUMS.txt'
+if (Test-Path -LiteralPath $checksumFile -PathType Leaf) {
+  foreach ($line in (Get-Content -LiteralPath $checksumFile)) {
+    if ($line -notmatch '^(?<hash>[0-9a-f]{64}) \*(?<path>.+)$') { throw "Invalid checksum line: $line" }
+    $target = Join-Path $PackageRoot $Matches.path.Replace('/', '\')
+    $actual = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actual -ne $Matches.hash) { throw "Checksum mismatch: $($Matches.path)" }
   }
-  if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
-    throw "Required executable is missing: $DisplayName"
-  }
-  $exeBytes = [System.IO.File]::ReadAllBytes($exePath)
-  if ($exeBytes.Length -lt 128) { throw "$DisplayName is truncated." }
-  if ($exeBytes[0] -ne 0x4D -or $exeBytes[1] -ne 0x5A) { throw "$DisplayName has an invalid DOS header." }
-  $peOffset = [BitConverter]::ToInt32($exeBytes, 0x3C)
-  if ($peOffset -lt 0x40 -or $peOffset + 4 -gt $exeBytes.Length) { throw "$DisplayName has an invalid PE offset." }
-  if ([BitConverter]::ToUInt32($exeBytes, $peOffset) -ne 0x00004550) { throw "$DisplayName has an invalid PE signature." }
-  $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exePath)
-  if (-not [string]::Equals($versionInfo.FileVersion, $ExpectedVersion, [System.StringComparison]::Ordinal)) {
-    throw "Unexpected $DisplayName version: $($versionInfo.FileVersion)"
-  }
-  return $versionInfo.FileVersion
 }
-
-$projectVersion = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'VERSION') -Raw).Trim()
-if ($projectVersion -notmatch '^\d+\.\d+\.\d+$') {
-  throw 'VERSION must contain a semantic version such as 0.3.0.'
-}
-$expectedFileVersion = $projectVersion + '.0'
-if ([string]::IsNullOrWhiteSpace($LauncherPath)) {
-  $LauncherPath = 'DSH-Desktop.exe'
-}
-if ([string]::IsNullOrWhiteSpace($UninstallerPath)) {
-  $UninstallerPath = 'Uninstall-DSH-Desktop.exe'
-}
-
-$launcherVersion = Assert-WindowsExecutable -Path $LauncherPath -DisplayName 'DSH-Desktop.exe' -ExpectedVersion $expectedFileVersion
-$uninstallerVersion = Assert-WindowsExecutable -Path $UninstallerPath -DisplayName 'Uninstall-DSH-Desktop.exe' -ExpectedVersion $expectedFileVersion
 
 Write-Output 'Release validation passed.'
-Write-Output ("PowerShell scripts: {0}" -f @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1' -File).Count)
-Write-Output ("Icon images:       {0}" -f $imageCount)
-Write-Output ("Entry executable:  {0}" -f $launcherVersion)
-Write-Output ("Uninstaller:       {0}" -f $uninstallerVersion)
+Write-Output "Package root:      $PackageRoot"
+Write-Output "Version:           $version"
+Write-Output "PowerShell scripts: $(@(Get-ChildItem -LiteralPath $PackageRoot -Filter '*.ps1' -File).Count)"
+Write-Output "Icon images:       $imageCount"

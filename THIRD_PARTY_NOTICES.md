@@ -36,3 +36,13 @@ SOFTWARE.
 ```
 
 The upstream name and icon are used only to identify compatibility with DeepSeek Harness. This community launcher is not endorsed by DeepSeek. The MIT license does not grant trademark rights.
+
+## Microsoft WebView2 SDK
+
+The desktop host redistributes managed assemblies and native loader files from:
+
+- Package: `Microsoft.Web.WebView2` 1.0.4129.50
+- Source: <https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4129.50>
+- License: BSD-3-Clause
+
+The WebView2 Runtime itself is not bundled. When missing, the installer obtains Microsoft's Evergreen Bootstrapper from Microsoft's official distribution URL and verifies its Microsoft Authenticode signature before execution.

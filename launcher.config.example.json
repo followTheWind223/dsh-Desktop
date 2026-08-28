@@ -1,6 +1,10 @@
 {
-  "HarnessDir": "D:\\deepseek-harness",
-  "DataDir": "D:\\deepseek-harness-data",
-  "NodePath": "D:\\path\\to\\node.exe",
-  "EdgePath": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
+  "SchemaVersion": 2,
+  "HarnessDir": "D:\\deepseek\\deepseek-harness",
+  "DataDir": "D:\\deepseek\\deepseek-harness-data",
+  "NodePath": "D:\\deepseek\\nodejs\\node-v24.20.0-win-x64\\node.exe",
+  "Language": "auto",
+  "HarnessManaged": false,
+  "DataManaged": false,
+  "NodeManaged": false
 }

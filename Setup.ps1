@@ -7,12 +7,19 @@ param(
   [string]$EdgePath,
   [string]$ShortcutPath,
   [string]$HarnessRef,
+  [ValidateSet('auto', 'zh-CN', 'en-US')][string]$Language = 'auto',
   [switch]$NonInteractive,
+  [switch]$Inspect,
   [switch]$AcceptUpstreamScripts,
+  [switch]$AcceptUnverifiedHarness,
   [switch]$DownloadNode,
   [switch]$NodeOnly,
   [switch]$DownloadOnly,
   [switch]$SkipAudit,
+  [switch]$CreateDesktopShortcut,
+  [switch]$CreateStartMenuShortcut,
+  [switch]$RemoveDesktopShortcut,
+  [switch]$RemoveStartMenuShortcut,
   [switch]$ForceLauncherConfig
 )
 
@@ -327,7 +334,12 @@ function Install-PortableNode {
     $nodeParent = Join-Path $RootPath 'nodejs'
     $finalDirectory = Join-Path $nodeParent $folderName
     if (Test-Path -LiteralPath $finalDirectory) {
-      throw "Refusing to overwrite an existing portable Node.js path: $finalDirectory"
+      $existingPortable = Get-CompatibleNodeInfo -Candidate (Join-Path $finalDirectory 'node.exe')
+      if ($null -eq $existingPortable -or -not [string]::Equals($existingPortable.Version, $version, [System.StringComparison]::Ordinal)) {
+        throw "Refusing to overwrite an invalid existing portable Node.js path: $finalDirectory"
+      }
+      Write-Host ("Compatible portable Node.js already exists and will be reused: {0} ({1})" -f $existingPortable.Path, $existingPortable.Version)
+      return [pscustomobject]@{ Path = $existingPortable.Path; Version = $existingPortable.Version; InstalledNew = $false }
     }
 
     $releaseBase = [uri]("https://nodejs.org/dist/{0}/" -f $version)
@@ -387,7 +399,7 @@ function Install-PortableNode {
     $installedNode = Get-CompatibleNodeInfo -Candidate (Join-Path $finalDirectory 'node.exe')
     if ($null -eq $installedNode) { throw 'The portable Node.js installation could not be verified after extraction.' }
     Write-Host ("Portable Node.js installed: {0} ({1})" -f $installedNode.Path, $installedNode.Version)
-    return $installedNode
+    return [pscustomobject]@{ Path = $installedNode.Path; Version = $installedNode.Version; InstalledNew = $true }
   } finally {
     $ProgressPreference = $originalProgressPreference
     [System.Net.ServicePointManager]::SecurityProtocol = $originalSecurityProtocol
@@ -522,37 +534,166 @@ function Remove-PnpmShim {
   Remove-Item -LiteralPath $resolvedShim -Force -ErrorAction SilentlyContinue
 }
 
+function Get-NormalizedRepositoryUrl {
+  param([AllowNull()][string]$Value)
+
+  if ([string]::IsNullOrWhiteSpace($Value)) { return '' }
+  return $Value.Trim().TrimEnd('/').ToLowerInvariant()
+}
+
+function Get-HarnessState {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [AllowNull()]$GitCommand,
+    [switch]$AllowUnverified
+  )
+
+  $result = [ordered]@{
+    Path = $Path
+    State = 'Missing'
+    Trusted = $false
+    Ready = $false
+    Origin = $null
+    Commit = $null
+    Reason = $null
+  }
+  if (-not (Test-Path -LiteralPath $Path)) { return [pscustomobject]$result }
+  if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+    $result.State = 'Invalid'
+    $result.Reason = 'The Harness path is not a directory.'
+    return [pscustomobject]$result
+  }
+
+  foreach ($requiredSource in @('package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps\cli\src\bin.ts')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Path $requiredSource) -PathType Leaf)) {
+      $result.State = 'Invalid'
+      $result.Reason = "The existing directory is not a compatible Harness checkout. Missing: $requiredSource"
+      return [pscustomobject]$result
+    }
+  }
+
+  if (Test-Path -LiteralPath (Join-Path $Path '.git') -PathType Container) {
+    if ($null -eq $GitCommand) {
+      $result.State = 'Invalid'
+      $result.Reason = 'Git is required to verify the existing Harness checkout.'
+      return [pscustomobject]$result
+    }
+    $originLines = @(& $GitCommand.Source -C $Path remote get-url origin 2>$null)
+    $originExitCode = $LASTEXITCODE
+    $result.Origin = [string]($originLines | Select-Object -First 1)
+    if ($originExitCode -ne 0 -or
+        (Get-NormalizedRepositoryUrl -Value $result.Origin) -ne (Get-NormalizedRepositoryUrl -Value $officialRepositoryUrl)) {
+      $result.State = 'Invalid'
+      $result.Reason = 'The existing Harness Git origin is not the official DeepSeek repository.'
+      return [pscustomobject]$result
+    }
+    $commitLines = @(& $GitCommand.Source -C $Path rev-parse HEAD 2>$null)
+    $commitExitCode = $LASTEXITCODE
+    $result.Commit = [string]($commitLines | Select-Object -First 1)
+    if ($commitExitCode -ne 0 -or $result.Commit -notmatch '^[0-9a-f]{40}$') {
+      $result.State = 'Invalid'
+      $result.Reason = 'Unable to verify the existing Harness commit.'
+      return [pscustomobject]$result
+    }
+    $result.Trusted = $true
+  } elseif (-not $AllowUnverified) {
+    $result.State = 'Invalid'
+    $result.Reason = 'The existing Harness directory has no Git metadata and cannot be verified. Use -AcceptUnverifiedHarness only if you trust its source.'
+    return [pscustomobject]$result
+  }
+
+  $result.Ready = (
+    (Test-Path -LiteralPath (Join-Path $Path 'apps\web\dist\index.html') -PathType Leaf) -and
+    (Test-Path -LiteralPath (Join-Path $Path 'node_modules\tsx\package.json') -PathType Leaf)
+  )
+  $result.State = if ($result.Ready) { 'Ready' } else { 'Source' }
+  return [pscustomobject]$result
+}
+
+function Get-WebView2State {
+  $clientId = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+  $locations = @(
+    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\$clientId",
+    "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\$clientId",
+    "HKCU:\Software\Microsoft\EdgeUpdate\Clients\$clientId"
+  )
+  foreach ($location in $locations) {
+    if (-not (Test-Path -LiteralPath $location)) { continue }
+    $version = [string](Get-ItemPropertyValue -LiteralPath $location -Name 'pv' -ErrorAction SilentlyContinue)
+    if (-not [string]::IsNullOrWhiteSpace($version) -and $version -ne '0.0.0.0') {
+      return [pscustomobject]@{ Available = $true; Version = $version }
+    }
+  }
+  return [pscustomobject]@{ Available = $false; Version = $null }
+}
+
+function Write-InspectionResult {
+  param(
+    [Parameter(Mandatory = $true)][string]$RootPath,
+    [AllowNull()]$GitCommand
+  )
+
+  $harnessPath = Join-Path $RootPath 'deepseek-harness'
+  $harness = Get-HarnessState -Path $harnessPath -GitCommand $GitCommand -AllowUnverified:$AcceptUnverifiedHarness
+  $compatibleNode = Find-CompatibleNode -RootPath $RootPath
+  $pathNode = $null
+  $pathNodeCommand = Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($null -ne $pathNodeCommand) {
+    $versionLines = @(& $pathNodeCommand.Source --version 2>$null)
+    $pathNode = [pscustomobject]@{
+      Path = $pathNodeCommand.Source
+      Version = [string]($versionLines | Select-Object -First 1)
+      Compatible = ($null -ne (Get-CompatibleNodeInfo -Candidate $pathNodeCommand.Source))
+    }
+  }
+  [pscustomobject]@{
+    SchemaVersion = 1
+    Root = $RootPath
+    LauncherDir = (Join-Path $RootPath 'dsh-desktop')
+    Harness = $harness
+    Data = [pscustomobject]@{
+      Path = (Join-Path $RootPath 'deepseek-harness-data')
+      Exists = (Test-Path -LiteralPath (Join-Path $RootPath 'deepseek-harness-data') -PathType Container)
+    }
+    CompatibleNode = $compatibleNode
+    PathNode = $pathNode
+    GitAvailable = ($null -ne $GitCommand)
+    WebView2 = (Get-WebView2State)
+  } | ConvertTo-Json -Depth 7
+}
+
 function Invoke-Setup {
   $root = Select-DestinationRoot
   if (Test-Path -LiteralPath $root -PathType Leaf) {
     throw "DestinationRoot points to a file: $root"
   }
-  if ($NodeOnly -and $DownloadOnly) {
-    throw 'NodeOnly and DownloadOnly cannot be used together.'
+  if ($NodeOnly -and $DownloadOnly) { throw 'NodeOnly and DownloadOnly cannot be used together.' }
+  if ($NodeOnly -and -not $DownloadNode) { throw 'NodeOnly requires DownloadNode.' }
+  if ($Inspect -and ($NodeOnly -or $DownloadOnly -or $DownloadNode)) {
+    throw 'Inspect cannot be combined with installation-only switches.'
   }
-  if ($NodeOnly -and -not $DownloadNode) {
-    throw 'NodeOnly requires DownloadNode.'
-  }
-
-  if (-not [string]::IsNullOrWhiteSpace($HarnessRef)) {
-    if ($HarnessRef.StartsWith('-', [System.StringComparison]::Ordinal) -or $HarnessRef -notmatch '^[A-Za-z0-9._/\-]{1,200}$') {
-      throw 'HarnessRef contains unsupported characters.'
-    }
+  if (-not [string]::IsNullOrWhiteSpace($HarnessRef) -and
+      ($HarnessRef.StartsWith('-', [System.StringComparison]::Ordinal) -or $HarnessRef -notmatch '^[A-Za-z0-9._/\-]{1,200}$')) {
+    throw 'HarnessRef contains unsupported characters.'
   }
 
   $harnessDir = Join-Path $root 'deepseek-harness'
   $dataDir = Join-Path $root 'deepseek-harness-data'
-  if (-not $NodeOnly -and (Test-Path -LiteralPath $harnessDir)) {
-    throw "Refusing to overwrite an existing Harness path: $harnessDir"
+  $gitCommand = Get-Command git.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($Inspect) {
+    Write-InspectionResult -RootPath $root -GitCommand $gitCommand
+    return
   }
 
-  $gitCommand = $null
+  $harnessState = $null
   if (-not $NodeOnly) {
-    $gitCommand = Get-Command git.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($null -eq $gitCommand) {
-      throw 'Git for Windows was not found. Install Git, then run setup again.'
+    $harnessState = Get-HarnessState -Path $harnessDir -GitCommand $gitCommand -AllowUnverified:$AcceptUnverifiedHarness
+    if ($harnessState.State -eq 'Invalid') { throw $harnessState.Reason }
+    if ($harnessState.State -eq 'Missing' -and $null -eq $gitCommand) {
+      throw 'Git for Windows was not found. Git is required only when the official Harness must be downloaded.'
     }
   }
+
   $nodePlan = $null
   $nodeInfo = $null
   if (-not $DownloadOnly) {
@@ -560,19 +701,26 @@ function Invoke-Setup {
     if ($nodePlan.Mode -eq 'Existing') { $nodeInfo = $nodePlan.Info }
   }
 
+  $requiresBuild = (-not $NodeOnly -and -not $DownloadOnly -and $harnessState.State -ne 'Ready')
+  if ($NonInteractive -and $requiresBuild -and -not $AcceptUpstreamScripts) {
+    throw 'AcceptUpstreamScripts is required because dependencies must be installed and the upstream project must be built.'
+  }
+
   if ($NodeOnly) {
     $confirmation = @(
       'An official portable Node.js LTS release will be downloaded from:',
-      'https://nodejs.org/dist/',
-      '',
+      'https://nodejs.org/dist/', '',
       ("Destination: {0}" -f (Join-Path $root 'nodejs')),
       'The ZIP must match the SHA-256 value in the official release manifest.'
     )
   } else {
+    $harnessAction = switch ($harnessState.State) {
+      'Ready' { 'reuse the existing ready installation' }
+      'Source' { 'reuse the verified source and finish its build' }
+      default { 'download the official repository' }
+    }
     $confirmation = @(
-      'DeepSeek Harness will be downloaded from:',
-      $officialRepositoryUrl,
-      '',
+      "Harness: $harnessAction",
       "Program: $harnessDir",
       "Data:    $dataDir"
     )
@@ -580,26 +728,19 @@ function Invoke-Setup {
       if ($nodePlan.Mode -eq 'Download') {
         $confirmation += "Node:    download official portable LTS to $(Join-Path $root 'nodejs')"
       } else {
-        $confirmation += "Node:    $($nodeInfo.Path) ($($nodeInfo.Version))"
+        $confirmation += "Node:    reuse $($nodeInfo.Path) ($($nodeInfo.Version))"
       }
     }
-  }
-  if (-not $DownloadOnly -and -not $NodeOnly) {
-    $confirmation += @(
-      '',
-      'The official locked dependencies and reviewed install scripts will run before the project is built.'
-    )
+    if ($requiresBuild) {
+      $confirmation += @('', 'The official locked dependencies and reviewed install scripts will run before the project is built.')
+    }
   }
   $confirmation += @('', 'Continue?')
 
-  if ($NonInteractive) {
-    if (-not $DownloadOnly -and -not $NodeOnly -and -not $AcceptUpstreamScripts) {
-      throw 'AcceptUpstreamScripts is required for a non-interactive full installation.'
-    }
-  } else {
+  if (-not $NonInteractive) {
     $answer = [System.Windows.Forms.MessageBox]::Show(
       ($confirmation -join [Environment]::NewLine),
-      $(if ($NodeOnly) { 'Install portable Node.js' } else { 'Install DeepSeek Harness' }),
+      $(if ($NodeOnly) { 'Install portable Node.js' } else { 'Configure DSH Desktop' }),
       [System.Windows.Forms.MessageBoxButtons]::YesNo,
       [System.Windows.Forms.MessageBoxIcon]::Question
     )
@@ -609,162 +750,146 @@ function Invoke-Setup {
   if (-not (Test-Path -LiteralPath $root -PathType Container)) {
     New-Item -ItemType Directory -Path $root | Out-Null
   }
-
   $driveRoot = [System.IO.Path]::GetPathRoot($root)
   try {
     $drive = New-Object System.IO.DriveInfo($driveRoot)
-    $requiredFreeBytes = if ($NodeOnly) { 1GB } else { $minimumFreeBytes }
+    $requiredFreeBytes = if ($NodeOnly) { 1GB } elseif ($harnessState.State -eq 'Ready') { 512MB } else { $minimumFreeBytes }
     if ($drive.IsReady -and $drive.AvailableFreeSpace -lt $requiredFreeBytes) {
-      throw "At least $([math]::Round($requiredFreeBytes / 1GB)) GB of free space is required."
+      throw "At least $([math]::Ceiling($requiredFreeBytes / 1GB)) GB of free space is required."
     }
   } catch [System.IO.IOException] {
     throw "Unable to inspect free space for: $driveRoot"
   }
 
+  $nodeManaged = $false
   if ($null -ne $nodePlan -and $nodePlan.Mode -eq 'Download') {
     $nodeInfo = Install-PortableNode -RootPath $root
+    $nodeManaged = [bool]$nodeInfo.InstalledNew
   }
   if ($NodeOnly) {
-    $message = "Official portable Node.js was installed.`n`nPath: $($nodeInfo.Path)`nVersion: $($nodeInfo.Version)`n`nNo global PATH or system environment variables were changed."
+    $nodeOnlyAction = if ($nodeInfo.InstalledNew) { 'was installed' } else { 'was already present and was reused' }
+    $message = "Official portable Node.js $nodeOnlyAction.`n`nPath: $($nodeInfo.Path)`nVersion: $($nodeInfo.Version)`n`nNo global PATH or system environment variables were changed."
     Write-Output $message
     Show-SetupMessage -Title 'Node.js installation complete' -Message $message -Icon Information
     return
   }
 
-  Write-Host '[1/6] Cloning the official DeepSeek Harness repository...'
-  $cloneArguments = @('clone', '--depth', '1', '--single-branch')
-  if (-not [string]::IsNullOrWhiteSpace($HarnessRef)) {
-    $cloneArguments += @('--branch', $HarnessRef)
-  }
-  $cloneArguments += @('--', $officialRepositoryUrl, $harnessDir)
-  Invoke-NativeCommand -FilePath $gitCommand.Source -ArgumentList $cloneArguments -Description 'Official Harness clone'
-
-  $originLines = @(& $gitCommand.Source -C $harnessDir remote get-url origin)
-  $originExitCode = $LASTEXITCODE
-  $origin = $originLines | Select-Object -First 1
-  if ($originExitCode -ne 0 -or -not [string]::Equals(
-      ([string]$origin).Trim(),
-      $officialRepositoryUrl,
-      [System.StringComparison]::OrdinalIgnoreCase
-    )) {
-    throw 'The cloned repository origin is not the official DeepSeek Harness URL.'
-  }
-  $commitLines = @(& $gitCommand.Source -C $harnessDir rev-parse HEAD)
-  $commitExitCode = $LASTEXITCODE
-  $commit = $commitLines | Select-Object -First 1
-  if ($commitExitCode -ne 0 -or ([string]$commit) -notmatch '^[0-9a-f]{40}$') {
-    throw 'Unable to verify the cloned Harness commit.'
+  $harnessManaged = $false
+  if ($harnessState.State -eq 'Missing') {
+    Write-Host '[Harness] Cloning the official DeepSeek Harness repository...'
+    $cloneArguments = @('clone', '--depth', '1', '--single-branch')
+    if (-not [string]::IsNullOrWhiteSpace($HarnessRef)) { $cloneArguments += @('--branch', $HarnessRef) }
+    $cloneArguments += @('--', $officialRepositoryUrl, $harnessDir)
+    Invoke-NativeCommand -FilePath $gitCommand.Source -ArgumentList $cloneArguments -Description 'Official Harness clone'
+    $harnessManaged = $true
+    $harnessState = Get-HarnessState -Path $harnessDir -GitCommand $gitCommand
+    if ($harnessState.State -eq 'Invalid' -or $harnessState.State -eq 'Missing') {
+      throw "The downloaded Harness failed verification: $($harnessState.Reason)"
+    }
+  } else {
+    Write-Host "[Harness] Reusing existing installation: $harnessDir ($($harnessState.State))"
   }
 
   if ($DownloadOnly) {
-    $message = "Official DeepSeek Harness was downloaded.`n`nPath: $harnessDir`nCommit: $commit"
+    $message = "Official DeepSeek Harness is available.`n`nPath: $harnessDir`nCommit: $($harnessState.Commit)"
     Write-Output $message
     Show-SetupMessage -Title 'Download complete' -Message $message -Icon Information
     return
   }
 
-  Write-Host '[2/6] Verifying the upstream package manager and lockfile...'
-  foreach ($requiredFile in @('package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml')) {
-    if (-not (Test-Path -LiteralPath (Join-Path $harnessDir $requiredFile) -PathType Leaf)) {
-      throw "The official checkout is missing: $requiredFile"
+  $auditWarning = $false
+  if ($harnessState.State -ne 'Ready') {
+    Write-Host '[Harness] Verifying the upstream package manager and lockfile...'
+    $package = Get-Content -LiteralPath (Join-Path $harnessDir 'package.json') -Raw | ConvertFrom-Json
+    $nodeEngine = [string]$package.engines.node
+    if (-not [string]::Equals($nodeEngine, '^22.19.0 || >=24.0.0', [System.StringComparison]::Ordinal)) {
+      throw "The official checkout changed its Node.js requirement. Review before installing: $nodeEngine"
     }
-  }
-  $package = Get-Content -LiteralPath (Join-Path $harnessDir 'package.json') -Raw | ConvertFrom-Json
-  $nodeEngine = [string]$package.engines.node
-  if (-not [string]::Equals($nodeEngine, '^22.19.0 || >=24.0.0', [System.StringComparison]::Ordinal)) {
-    throw "The official checkout changed its Node.js requirement. Review before installing: $nodeEngine"
-  }
-  $packageManager = [string]$package.packageManager
-  $managerMatch = [regex]::Match($packageManager, '^pnpm@(?<version>\d+\.\d+\.\d+)$')
-  if (-not $managerMatch.Success) {
-    throw "The official checkout requested an unsupported package manager: $packageManager"
-  }
-  $pnpmVersion = $managerMatch.Groups['version'].Value
-  $workspacePolicy = Get-Content -LiteralPath (Join-Path $harnessDir 'pnpm-workspace.yaml') -Raw
-  if ($workspacePolicy -notmatch '(?m)^allowBuilds:\s*$') {
-    throw 'The official checkout no longer contains the expected dependency-build allowlist.'
-  }
+    $packageManager = [string]$package.packageManager
+    $managerMatch = [regex]::Match($packageManager, '^pnpm@(?<version>\d+\.\d+\.\d+)$')
+    if (-not $managerMatch.Success) { throw "The official checkout requested an unsupported package manager: $packageManager" }
+    $pnpmVersion = $managerMatch.Groups['version'].Value
+    $workspacePolicy = Get-Content -LiteralPath (Join-Path $harnessDir 'pnpm-workspace.yaml') -Raw
+    if ($workspacePolicy -notmatch '(?m)^allowBuilds:\s*$') {
+      throw 'The official checkout no longer contains the expected dependency-build allowlist.'
+    }
 
-  $nodeDir = Split-Path -Parent $nodeInfo.Path
-  $originalPath = $env:PATH
-  $hadCorepackPrompt = Test-Path -LiteralPath 'Env:\COREPACK_ENABLE_DOWNLOAD_PROMPT'
-  $originalCorepackPrompt = [Environment]::GetEnvironmentVariable('COREPACK_ENABLE_DOWNLOAD_PROMPT', 'Process')
-  $hadPnpmSelfUpdate = Test-Path -LiteralPath 'Env:\PNPM_DISABLE_SELF_UPDATE_CHECK'
-  $originalPnpmSelfUpdate = [Environment]::GetEnvironmentVariable('PNPM_DISABLE_SELF_UPDATE_CHECK', 'Process')
-  $env:PATH = $nodeDir + ';' + $env:PATH
-  $env:COREPACK_ENABLE_DOWNLOAD_PROMPT = '0'
-  $env:PNPM_DISABLE_SELF_UPDATE_CHECK = '1'
-
-  $shimDir = $null
-  Push-Location $harnessDir
-  try {
-    $runner = Get-PnpmRunner -SelectedNodePath $nodeInfo.Path -ExpectedVersion $pnpmVersion
-    $shimDir = New-PnpmShim -Runner $runner -RootPath $root
-    $env:PATH = $shimDir + ';' + $nodeDir + ';' + $originalPath
-
-    Write-Host "[3/6] Installing locked dependencies with pnpm $pnpmVersion..."
-    Invoke-PnpmCommand -Runner $runner -CommandArguments @('install', '--frozen-lockfile', '--reporter=append-only') -Description 'Dependency installation'
-
-    Write-Host '[4/6] Building DeepSeek Harness...'
-    Invoke-PnpmCommand -Runner $runner -CommandArguments @('run', 'build') -Description 'Harness build'
-
-    $auditWarning = $false
-    if (-not $SkipAudit) {
-      Write-Host '[5/6] Auditing the upstream dependency lockfile...'
-      $auditExit = 0
-      Invoke-PnpmCommand -Runner $runner -CommandArguments @('audit', '--audit-level', 'high') -Description 'Dependency audit' -AllowFailure -ResultExitCode ([ref]$auditExit)
-      if ($auditExit -ne 0) {
-        $auditWarning = $true
-        Write-Warning 'The upstream dependency audit reported high-severity advisories. Review the audit output before sensitive use.'
+    $nodeDir = Split-Path -Parent $nodeInfo.Path
+    $originalPath = $env:PATH
+    $hadCorepackPrompt = Test-Path -LiteralPath 'Env:\COREPACK_ENABLE_DOWNLOAD_PROMPT'
+    $originalCorepackPrompt = [Environment]::GetEnvironmentVariable('COREPACK_ENABLE_DOWNLOAD_PROMPT', 'Process')
+    $hadPnpmSelfUpdate = Test-Path -LiteralPath 'Env:\PNPM_DISABLE_SELF_UPDATE_CHECK'
+    $originalPnpmSelfUpdate = [Environment]::GetEnvironmentVariable('PNPM_DISABLE_SELF_UPDATE_CHECK', 'Process')
+    $hadCi = Test-Path -LiteralPath 'Env:\CI'
+    $originalCi = [Environment]::GetEnvironmentVariable('CI', 'Process')
+    $env:PATH = $nodeDir + ';' + $env:PATH
+    $env:COREPACK_ENABLE_DOWNLOAD_PROMPT = '0'
+    $env:PNPM_DISABLE_SELF_UPDATE_CHECK = '1'
+    $env:CI = 'true'
+    $shimDir = $null
+    Push-Location $harnessDir
+    try {
+      $runner = Get-PnpmRunner -SelectedNodePath $nodeInfo.Path -ExpectedVersion $pnpmVersion
+      $shimDir = New-PnpmShim -Runner $runner -RootPath $root
+      $env:PATH = $shimDir + ';' + $nodeDir + ';' + $originalPath
+      Write-Host "[Harness] Installing locked dependencies with pnpm $pnpmVersion..."
+      Invoke-PnpmCommand -Runner $runner -CommandArguments @('install', '--frozen-lockfile', '--reporter=append-only') -Description 'Dependency installation'
+      Write-Host '[Harness] Building DeepSeek Harness...'
+      Invoke-PnpmCommand -Runner $runner -CommandArguments @('run', 'build') -Description 'Harness build'
+      if (-not $SkipAudit) {
+        Write-Host '[Harness] Auditing the upstream dependency lockfile...'
+        $auditExit = 0
+        Invoke-PnpmCommand -Runner $runner -CommandArguments @('audit', '--audit-level', 'high') -Description 'Dependency audit' -AllowFailure -ResultExitCode ([ref]$auditExit)
+        if ($auditExit -ne 0) {
+          $auditWarning = $true
+          Write-Warning 'The upstream dependency audit reported high-severity advisories. Review the audit output before sensitive use.'
+        }
       }
+    } finally {
+      Pop-Location
+      $env:PATH = $originalPath
+      if ($hadCorepackPrompt) { $env:COREPACK_ENABLE_DOWNLOAD_PROMPT = $originalCorepackPrompt } else { Remove-Item -LiteralPath 'Env:\COREPACK_ENABLE_DOWNLOAD_PROMPT' -ErrorAction SilentlyContinue }
+      if ($hadPnpmSelfUpdate) { $env:PNPM_DISABLE_SELF_UPDATE_CHECK = $originalPnpmSelfUpdate } else { Remove-Item -LiteralPath 'Env:\PNPM_DISABLE_SELF_UPDATE_CHECK' -ErrorAction SilentlyContinue }
+      if ($hadCi) { $env:CI = $originalCi } else { Remove-Item -LiteralPath 'Env:\CI' -ErrorAction SilentlyContinue }
+      Remove-PnpmShim -ShimDir $shimDir -RootPath $root
     }
-  } finally {
-    Pop-Location
-    $env:PATH = $originalPath
-    if ($hadCorepackPrompt) {
-      $env:COREPACK_ENABLE_DOWNLOAD_PROMPT = $originalCorepackPrompt
-    } else {
-      Remove-Item -LiteralPath 'Env:\COREPACK_ENABLE_DOWNLOAD_PROMPT' -ErrorAction SilentlyContinue
-    }
-    if ($hadPnpmSelfUpdate) {
-      $env:PNPM_DISABLE_SELF_UPDATE_CHECK = $originalPnpmSelfUpdate
-    } else {
-      Remove-Item -LiteralPath 'Env:\PNPM_DISABLE_SELF_UPDATE_CHECK' -ErrorAction SilentlyContinue
-    }
-    Remove-PnpmShim -ShimDir $shimDir -RootPath $root
+    $harnessState = Get-HarnessState -Path $harnessDir -GitCommand $gitCommand -AllowUnverified:$AcceptUnverifiedHarness
+    if (-not $harnessState.Ready) { throw 'The Harness build completed without producing all required runtime files.' }
+  } else {
+    Write-Host '[Harness] Ready installation detected; dependency installation and build were skipped.'
   }
 
-  foreach ($builtFile in @(
-      (Join-Path $harnessDir 'apps\cli\src\bin.ts'),
-      (Join-Path $harnessDir 'apps\web\dist\index.html'),
-      (Join-Path $harnessDir 'node_modules\tsx')
-    )) {
-    if (-not (Test-Path -LiteralPath $builtFile)) {
-      throw "The Harness build did not produce a required file: $builtFile"
-    }
-  }
+  Write-Host '[Desktop] Checking the Microsoft WebView2 Runtime...'
+  & (Join-Path $PSScriptRoot 'Ensure-WebView2.ps1') -NonInteractive
 
-  Write-Host '[6/6] Creating the launcher configuration and desktop shortcut...'
+  Write-Host '[Desktop] Writing launcher configuration and applying shortcut choices...'
   $installParameters = @{
     HarnessDir = $harnessDir
     DataDir = $dataDir
     NodePath = $nodeInfo.Path
+    Language = $Language
   }
-  if (-not [string]::IsNullOrWhiteSpace($EdgePath)) { $installParameters.EdgePath = $EdgePath }
   if (-not [string]::IsNullOrWhiteSpace($ShortcutPath)) { $installParameters.ShortcutPath = $ShortcutPath }
+  if ($CreateDesktopShortcut) { $installParameters.CreateDesktopShortcut = $true }
+  if ($CreateStartMenuShortcut) { $installParameters.CreateStartMenuShortcut = $true }
+  if ($RemoveDesktopShortcut) { $installParameters.RemoveDesktopShortcut = $true }
+  if ($RemoveStartMenuShortcut) { $installParameters.RemoveStartMenuShortcut = $true }
+  if ($harnessManaged) { $installParameters.HarnessManaged = $true }
+  if ($nodeManaged) { $installParameters.NodeManaged = $true }
   if ($ForceLauncherConfig) { $installParameters.Force = $true }
   & (Join-Path $PSScriptRoot 'Install.ps1') @installParameters
 
   $successLines = @(
-    'DeepSeek Harness installation completed.',
-    '',
-    "Program: $harnessDir",
+    'DSH Desktop configuration completed.', '',
+    "Harness: $harnessDir ($($harnessState.State))",
     "Data:    $dataDir",
-    "Commit:  $commit"
+    "Node:    $($nodeInfo.Path) ($($nodeInfo.Version))",
+    "Commit:  $($harnessState.Commit)"
   )
-  if ($auditWarning) {
-    $successLines += @('', 'Warning: the upstream dependency audit reported high-severity advisories. See the setup console output.')
+  if (-not $CreateDesktopShortcut -and -not $CreateStartMenuShortcut -and [string]::IsNullOrWhiteSpace($ShortcutPath)) {
+    $successLines += 'Shortcut: none; open DSH-Desktop.exe from the application folder.'
   }
+  if ($auditWarning) { $successLines += @('', 'Warning: the upstream dependency audit reported high-severity advisories. See the setup console output.') }
   $successMessage = $successLines -join [Environment]::NewLine
   Write-Output $successMessage
   Show-SetupMessage -Title 'Installation complete' -Message $successMessage -Icon Information

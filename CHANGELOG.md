@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.4.0 - 2026-08-28
+
+- Replaced the Edge app-mode launcher with a native .NET Framework WinForms + WebView2 desktop host.
+- Added a bilingual graphical installer with user-selected install location, Node.js strategy, optional shortcuts, and launch-after-install.
+- Added reuse-first detection for existing official Harness checkouts, compatible Node.js runtimes, data directories, and WebView2.
+- Added repair detection for Harness directories moved with broken pnpm links.
+- Added a standalone setup EXE with an embedded, path-validated payload and a complete portable ZIP distribution.
+- Added Microsoft-signed WebView2 Evergreen Runtime bootstrap when the runtime is missing.
+- Added ownership-aware uninstall choices for installer-managed Harness, portable Node.js, and data; data remains opt-in with secondary confirmation.
+- Added a process Job Object, strict loopback navigation policy, token-redacted diagnostics, and ephemeral WebView2 user-data cleanup.
+
 ## 0.3.0 - 2026-08-28
 
 - Added an interactive choice between an existing Node.js runtime and an official portable LTS download.
