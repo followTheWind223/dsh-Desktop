@@ -6,6 +6,7 @@ launcher.config.json
 *.pem
 *.pfx
 *.p12
+*.tmp
 *.zip
 .DS_Store
 Thumbs.db

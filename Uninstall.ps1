@@ -21,11 +21,24 @@ if (-not [string]::Equals([System.IO.Path]::GetExtension($ShortcutPath), '.lnk',
 }
 
 $launcherScript = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'DeepSeek-Harness-Desktop.ps1'))
+$entryExecutable = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'DSH-Desktop.exe'))
 if (Test-Path -LiteralPath $ShortcutPath -PathType Leaf) {
   $shell = New-Object -ComObject WScript.Shell
   $shortcut = $shell.CreateShortcut($ShortcutPath)
   $expectedArgument = '-File "' + $launcherScript + '"'
-  if ($shortcut.Arguments.IndexOf($expectedArgument, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+  $isExeShortcut = $false
+  if (-not [string]::IsNullOrWhiteSpace($shortcut.TargetPath)) {
+    $isExeShortcut = [string]::Equals(
+      [System.IO.Path]::GetFullPath($shortcut.TargetPath),
+      $entryExecutable,
+      [System.StringComparison]::OrdinalIgnoreCase
+    )
+  }
+  $isLegacyShortcut = $shortcut.Arguments.IndexOf(
+    $expectedArgument,
+    [System.StringComparison]::OrdinalIgnoreCase
+  ) -ge 0
+  if (-not $isExeShortcut -and -not $isLegacyShortcut) {
     throw "Refusing to remove a shortcut not owned by this launcher: $ShortcutPath"
   }
   Remove-Item -LiteralPath $ShortcutPath -Force

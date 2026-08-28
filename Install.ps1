@@ -59,9 +59,10 @@ function Find-EdgePath {
 }
 
 $launcherScript = Join-Path $PSScriptRoot 'DeepSeek-Harness-Desktop.ps1'
+$entryExecutable = Join-Path $PSScriptRoot 'DSH-Desktop.exe'
 $iconPath = Join-Path $PSScriptRoot 'assets\deepseek-harness.ico'
 $configPath = Join-Path $PSScriptRoot 'launcher.config.json'
-foreach ($projectFile in @($launcherScript, $iconPath)) {
+foreach ($projectFile in @($launcherScript, $entryExecutable, $iconPath)) {
   if (-not (Test-Path -LiteralPath $projectFile -PathType Leaf)) {
     throw "The launcher package is incomplete: $projectFile"
   }
@@ -139,19 +140,19 @@ $configJson = ($config | ConvertTo-Json -Depth 3) + [Environment]::NewLine
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($configPath, $configJson, $utf8NoBom)
 
-$powerShellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($ShortcutPath)
-$shortcut.TargetPath = $powerShellPath
-$shortcut.Arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $launcherScript + '"'
+$shortcut.TargetPath = $entryExecutable
+$shortcut.Arguments = ''
 $shortcut.WorkingDirectory = $HarnessDir
-$shortcut.IconLocation = $iconPath + ',0'
+$shortcut.IconLocation = $entryExecutable + ',0'
 $shortcut.Description = 'Unofficial desktop launcher for DeepSeek Harness'
 $shortcut.WindowStyle = 7
 $shortcut.Save()
 
 Write-Output 'DeepSeek Harness desktop launcher configured.'
 Write-Output ("Launcher: {0}" -f $PSScriptRoot)
+Write-Output ("Entry EXE: {0}" -f $entryExecutable)
 Write-Output ("Shortcut: {0}" -f $ShortcutPath)
 Write-Output ("Harness:  {0}" -f $HarnessDir)
 Write-Output ("Data:     {0}" -f $DataDir)

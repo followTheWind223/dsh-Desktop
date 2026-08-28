@@ -13,10 +13,17 @@ The launcher assumes the following local components are trusted:
 - the configured `node.exe` and `msedge.exe` binaries;
 - the current Windows user account.
 
+First-run setup additionally trusts the official DeepSeek Harness GitHub repository, the exact commit cloned from it, the package-manager version declared by that commit, its lockfile, and the registries referenced by that lockfile.
+
 It is designed to reduce accidental exposure to the network and accidental termination of unrelated processes. It does not defend against malware or another process already running with the same user's privileges.
 
 ## Security boundaries
 
+- Setup uses a hard-coded HTTPS URL for the official DeepSeek Harness repository and verifies the cloned `origin` and 40-character commit hash.
+- User-selected installation roots must be absolute local-drive paths. Network paths and existing Harness destinations are rejected.
+- Non-interactive full installation requires `-AcceptUpstreamScripts`; interactive installation displays the exact repository and target paths before cloning or running dependencies.
+- Setup accepts only a strict `pnpm@<semver>` package-manager declaration, uses `--frozen-lockfile`, and relies on the upstream workspace's strict dependency-build allowlist.
+- Setup runs the native pnpm audit and warns on high-severity findings. It never runs forced remediation or changes the upstream lockfile.
 - The Harness server is forced to `127.0.0.1` on a random port.
 - Only a strict loopback trust URL is accepted from Harness output.
 - Trust tokens and API keys are never written by the launcher to disk.
@@ -28,6 +35,12 @@ It is designed to reduce accidental exposure to the network and accidental termi
 - The uninstaller validates shortcut ownership and never removes Harness source, session data, runtimes, or environment variables.
 
 ## Known limitations
+
+`DSH-Desktop.exe` is reproducibly buildable from the included C# source but is not Authenticode-signed. Windows SmartScreen may identify it as an unknown publisher. Review the source and run `Build-Exe.ps1` locally if this is unacceptable.
+
+The default setup follows the current upstream default branch, which can change. Higher-assurance deployments should pass a reviewed branch or tag through `-HarnessRef`, record the resulting commit printed by setup, and review upstream changes before updating.
+
+Dependency auditing can report upstream advisories. Setup displays a warning but does not modify DeepSeek Harness dependencies or claim that reported code is unreachable. Review the audit output and the upstream project's response before sensitive use.
 
 The local trust URL is briefly visible in the command line of the Edge process. A different process with the same Windows user's privileges may be able to inspect it. Do not run untrusted software in the same account while handling sensitive sessions.
 
