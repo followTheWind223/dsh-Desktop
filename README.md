@@ -1,8 +1,17 @@
 # DeepSeek Harness Windows Desktop Launcher
 
-面向 Windows 的非官方社区启动器。它可以从 DeepSeek 官方仓库自动下载、安装和构建
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)，再用独立的 Microsoft Edge
-应用窗口运行 Web UI。
+> An unofficial open-source Windows desktop launcher for DeepSeek Harness with guided setup,
+> portable Node.js, custom install locations, desktop shortcuts, and one-click uninstall.
+
+## 项目简介（About）
+
+**DSH Desktop** 是面向 Windows 的非官方开源桌面启动器。它可以从 DeepSeek 官方仓库自动下载、
+安装和构建 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)，并通过独立的
+Microsoft Edge 应用窗口运行 Web UI。用户可以自由选择安装位置，使用现有 Node.js 或下载经过
+SHA-256 校验的官方便携版 Node.js；安装完成后可从桌面快捷方式启动，也可以通过独立 EXE 一键卸载启动器。
+
+整个过程不会修改系统全局 `PATH`，不会硬编码或收集 API Key，并会保留 Harness 源码、用户会话数据和
+便携版 Node.js。
 
 项目仓库：<https://github.com/followTheWind223/dsh-Desktop>
 
