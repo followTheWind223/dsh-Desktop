@@ -9,6 +9,8 @@ param(
   [string]$HarnessRef,
   [switch]$NonInteractive,
   [switch]$AcceptUpstreamScripts,
+  [switch]$DownloadNode,
+  [switch]$NodeOnly,
   [switch]$DownloadOnly,
   [switch]$SkipAudit,
   [switch]$ForceLauncherConfig
@@ -130,16 +132,15 @@ function Get-CompatibleNodeInfo {
 }
 
 function Find-CompatibleNode {
-  Write-Verbose ("Requested NodePath: [{0}]" -f $NodePath)
-  if (-not [string]::IsNullOrWhiteSpace($NodePath)) {
-    $requested = Get-CompatibleNodeInfo -Candidate $NodePath
-    if ($null -eq $requested) {
-      throw 'The requested NodePath is missing or incompatible. DeepSeek Harness requires Node.js ^22.19.0 or >=24.0.0.'
-    }
-    return $requested
-  }
+  param([Parameter(Mandatory = $true)][string]$RootPath)
 
   $candidates = New-Object 'System.Collections.Generic.List[string]'
+  $portableRoot = Join-Path $RootPath 'nodejs'
+  if (Test-Path -LiteralPath $portableRoot -PathType Container) {
+    foreach ($portableVersion in (Get-ChildItem -LiteralPath $portableRoot -Directory -Filter 'node-v*-win-*' | Sort-Object Name -Descending)) {
+      $candidates.Add((Join-Path $portableVersion.FullName 'node.exe'))
+    }
+  }
   $nodeCommand = Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($null -ne $nodeCommand) { $candidates.Add($nodeCommand.Source) }
   if (-not [string]::IsNullOrWhiteSpace($env:NVM_SYMLINK)) {
@@ -164,23 +165,234 @@ function Find-CompatibleNode {
     if ($null -ne $info) { return $info }
   }
 
-  if (-not $NonInteractive) {
-    $dialog = New-Object System.Windows.Forms.OpenFileDialog
-    try {
-      $dialog.Title = 'Select a compatible node.exe'
-      $dialog.Filter = 'Node.js executable (node.exe)|node.exe'
-      $dialog.CheckFileExists = $true
-      $dialog.Multiselect = $false
-      if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-        $selected = Get-CompatibleNodeInfo -Candidate $dialog.FileName
-        if ($null -ne $selected) { return $selected }
-      }
-    } finally {
-      $dialog.Dispose()
+  return $null
+}
+
+function Select-NodeFile {
+  $dialog = New-Object System.Windows.Forms.OpenFileDialog
+  try {
+    $dialog.Title = 'Select a compatible node.exe'
+    $dialog.Filter = 'Node.js executable (node.exe)|node.exe'
+    $dialog.CheckFileExists = $true
+    $dialog.Multiselect = $false
+    if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit 2 }
+    $selected = Get-CompatibleNodeInfo -Candidate $dialog.FileName
+    if ($null -eq $selected) {
+      throw 'The selected node.exe is incompatible. DeepSeek Harness requires Node.js ^22.19.0 or >=24.0.0.'
     }
+    return $selected
+  } finally {
+    $dialog.Dispose()
+  }
+}
+
+function Select-NodePlan {
+  param([Parameter(Mandatory = $true)][string]$RootPath)
+
+  Write-Verbose ("Requested NodePath: [{0}]" -f $NodePath)
+  if (-not [string]::IsNullOrWhiteSpace($NodePath) -and $DownloadNode) {
+    throw 'NodePath and DownloadNode cannot be used together.'
+  }
+  if (-not [string]::IsNullOrWhiteSpace($NodePath)) {
+    $requested = Get-CompatibleNodeInfo -Candidate $NodePath
+    if ($null -eq $requested) {
+      throw 'The requested NodePath is missing or incompatible. DeepSeek Harness requires Node.js ^22.19.0 or >=24.0.0.'
+    }
+    return [pscustomobject]@{ Mode = 'Existing'; Info = $requested }
+  }
+  if ($DownloadNode) {
+    return [pscustomobject]@{ Mode = 'Download'; Info = $null }
   }
 
-  throw 'Compatible Node.js was not found. Install Node.js ^22.19.0 or >=24.0.0, then run setup again.'
+  $discovered = Find-CompatibleNode -RootPath $RootPath
+  if ($NonInteractive) {
+    if ($null -eq $discovered) {
+      throw 'Compatible Node.js was not found. Pass -DownloadNode to install an official portable LTS release, or pass -NodePath.'
+    }
+    return [pscustomobject]@{ Mode = 'Existing'; Info = $discovered }
+  }
+
+  if ($null -ne $discovered) {
+    $answer = [System.Windows.Forms.MessageBox]::Show(
+      ("Compatible Node.js was found:`n`n{0} ({1})`n`nYes: use it`nNo: download an official portable Node.js LTS`nCancel: stop setup" -f $discovered.Path, $discovered.Version),
+      'Choose Node.js',
+      [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
+      [System.Windows.Forms.MessageBoxIcon]::Question
+    )
+    if ($answer -eq [System.Windows.Forms.DialogResult]::Yes) {
+      return [pscustomobject]@{ Mode = 'Existing'; Info = $discovered }
+    }
+    if ($answer -eq [System.Windows.Forms.DialogResult]::No) {
+      return [pscustomobject]@{ Mode = 'Download'; Info = $null }
+    }
+    exit 2
+  }
+
+  $answer = [System.Windows.Forms.MessageBox]::Show(
+    "A compatible Node.js installation was not found.`n`nYes: download an official portable Node.js LTS`nNo: select an existing node.exe`nCancel: stop setup",
+    'Node.js is required',
+    [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
+    [System.Windows.Forms.MessageBoxIcon]::Question
+  )
+  if ($answer -eq [System.Windows.Forms.DialogResult]::Yes) {
+    return [pscustomobject]@{ Mode = 'Download'; Info = $null }
+  }
+  if ($answer -eq [System.Windows.Forms.DialogResult]::No) {
+    return [pscustomobject]@{ Mode = 'Existing'; Info = (Select-NodeFile) }
+  }
+  exit 2
+}
+
+function Get-WindowsNodeArtifact {
+  $nativeArchitecture = if (-not [string]::IsNullOrWhiteSpace($env:PROCESSOR_ARCHITEW6432)) {
+    $env:PROCESSOR_ARCHITEW6432
+  } else {
+    $env:PROCESSOR_ARCHITECTURE
+  }
+  switch ($nativeArchitecture.ToUpperInvariant()) {
+    'AMD64' { return 'win-x64' }
+    'ARM64' { return 'win-arm64' }
+    default { throw "Portable Node.js setup supports only 64-bit x64 or ARM64 Windows. Found: $nativeArchitecture" }
+  }
+}
+
+function Invoke-OfficialNodeDownload {
+  param(
+    [Parameter(Mandatory = $true)][uri]$Uri,
+    [Parameter(Mandatory = $true)][string]$OutFile
+  )
+
+  if (-not [string]::Equals($Uri.Scheme, 'https', [System.StringComparison]::OrdinalIgnoreCase) -or
+      -not [string]::Equals($Uri.Host, 'nodejs.org', [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing a non-official Node.js download URL: $Uri"
+  }
+  Invoke-WebRequest -UseBasicParsing -Uri $Uri.AbsoluteUri -OutFile $OutFile -MaximumRedirection 0
+  if (-not (Test-Path -LiteralPath $OutFile -PathType Leaf)) {
+    throw "The official Node.js download did not create: $OutFile"
+  }
+}
+
+function Remove-NodeTemporaryDirectory {
+  param(
+    [AllowNull()][string]$TemporaryDirectory,
+    [Parameter(Mandatory = $true)][string]$RootPath
+  )
+
+  if ([string]::IsNullOrWhiteSpace($TemporaryDirectory) -or -not (Test-Path -LiteralPath $TemporaryDirectory -PathType Container)) {
+    return
+  }
+  $resolvedTemporary = [System.IO.Path]::GetFullPath($TemporaryDirectory)
+  $resolvedRoot = [System.IO.Path]::GetFullPath($RootPath).TrimEnd('\') + '\'
+  if (-not $resolvedTemporary.StartsWith($resolvedRoot, [System.StringComparison]::OrdinalIgnoreCase)) { return }
+  if (-not (Split-Path -Leaf $resolvedTemporary).StartsWith('.dsh-desktop-node-', [System.StringComparison]::Ordinal)) { return }
+  Remove-Item -LiteralPath $resolvedTemporary -Recurse -Force
+}
+
+function Install-PortableNode {
+  param([Parameter(Mandatory = $true)][string]$RootPath)
+
+  $artifact = Get-WindowsNodeArtifact
+  $temporaryDirectory = Join-Path $RootPath ('.dsh-desktop-node-' + $PID)
+  if (Test-Path -LiteralPath $temporaryDirectory) {
+    throw "Temporary Node.js download path already exists: $temporaryDirectory"
+  }
+  New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
+
+  $indexPath = Join-Path $temporaryDirectory 'index.json'
+  $checksumPath = Join-Path $temporaryDirectory 'SHASUMS256.txt'
+  $archivePath = $null
+  $originalSecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol
+  $originalProgressPreference = $ProgressPreference
+  try {
+    [System.Net.ServicePointManager]::SecurityProtocol = $originalSecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
+    $ProgressPreference = 'SilentlyContinue'
+    Write-Host 'Downloading the official Node.js release index...'
+    Invoke-OfficialNodeDownload -Uri ([uri]'https://nodejs.org/dist/index.json') -OutFile $indexPath
+    if ((Get-Item -LiteralPath $indexPath).Length -gt 5MB) { throw 'The Node.js release index is unexpectedly large.' }
+
+    $releaseIndex = Get-Content -LiteralPath $indexPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $releaseCandidates = @($releaseIndex | Where-Object {
+        $match = [regex]::Match([string]$_.version, '^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$')
+        $match.Success -and $_.lts -and
+        ((([int]$match.Groups['major'].Value -eq 22) -and ([int]$match.Groups['minor'].Value -ge 19)) -or
+          ([int]$match.Groups['major'].Value -ge 24)) -and
+        ($_.files -contains ($artifact + '-zip'))
+      } | Sort-Object { [version]($_.version.TrimStart('v')) } -Descending)
+    $release = $releaseCandidates | Select-Object -First 1
+    if ($null -eq $release) { throw "No compatible official Node.js LTS ZIP was found for $artifact." }
+
+    $version = [string]$release.version
+    $folderName = "node-$version-$artifact"
+    $archiveName = $folderName + '.zip'
+    $nodeParent = Join-Path $RootPath 'nodejs'
+    $finalDirectory = Join-Path $nodeParent $folderName
+    if (Test-Path -LiteralPath $finalDirectory) {
+      throw "Refusing to overwrite an existing portable Node.js path: $finalDirectory"
+    }
+
+    $releaseBase = [uri]("https://nodejs.org/dist/{0}/" -f $version)
+    Invoke-OfficialNodeDownload -Uri ([uri]::new($releaseBase, 'SHASUMS256.txt')) -OutFile $checksumPath
+    if ((Get-Item -LiteralPath $checksumPath).Length -gt 5MB) { throw 'The Node.js checksum manifest is unexpectedly large.' }
+    $archivePath = Join-Path $temporaryDirectory $archiveName
+    Write-Host ("Downloading official Node.js {0} LTS ({1})..." -f $version, $artifact)
+    Invoke-OfficialNodeDownload -Uri ([uri]::new($releaseBase, $archiveName)) -OutFile $archivePath
+    $archiveLength = (Get-Item -LiteralPath $archivePath).Length
+    if ($archiveLength -lt 1MB -or $archiveLength -gt 200MB) { throw 'The Node.js ZIP size is outside the expected range.' }
+
+    $manifest = Get-Content -LiteralPath $checksumPath -Raw -Encoding UTF8
+    $checksumMatch = [regex]::Match(
+      $manifest,
+      ('(?mi)^(?<hash>[0-9a-f]{64})\s+\*?' + [regex]::Escape($archiveName) + '\s*$')
+    )
+    if (-not $checksumMatch.Success) { throw "The official checksum manifest does not list: $archiveName" }
+    $expectedHash = $checksumMatch.Groups['hash'].Value.ToUpperInvariant()
+    $actualHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToUpperInvariant()
+    if (-not [string]::Equals($expectedHash, $actualHash, [System.StringComparison]::Ordinal)) {
+      throw 'The downloaded Node.js ZIP failed SHA-256 verification.'
+    }
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
+    try {
+      if ($archive.Entries.Count -gt 10000) { throw 'The Node.js ZIP contains an unexpected number of entries.' }
+      [long]$expandedBytes = 0
+      foreach ($entry in $archive.Entries) {
+        $entryName = $entry.FullName.Replace('\', '/')
+        $segments = @($entryName.Split('/') | Where-Object { $_.Length -gt 0 })
+        if ([System.IO.Path]::IsPathRooted($entryName) -or $segments -contains '..' -or
+            -not ($entryName -eq $folderName -or $entryName.StartsWith($folderName + '/', [System.StringComparison]::Ordinal))) {
+          throw "The Node.js ZIP contains an unsafe path: $entryName"
+        }
+        $expandedBytes += $entry.Length
+        if ($expandedBytes -gt 1GB) { throw 'The expanded Node.js ZIP is unexpectedly large.' }
+      }
+    } finally {
+      $archive.Dispose()
+    }
+
+    $extractRoot = Join-Path $temporaryDirectory 'expanded'
+    New-Item -ItemType Directory -Path $extractRoot | Out-Null
+    Expand-Archive -LiteralPath $archivePath -DestinationPath $extractRoot
+    $extractedDirectory = Join-Path $extractRoot $folderName
+    $nodeExecutable = Join-Path $extractedDirectory 'node.exe'
+    $nodeInfo = Get-CompatibleNodeInfo -Candidate $nodeExecutable
+    if ($null -eq $nodeInfo -or -not [string]::Equals($nodeInfo.Version, $version, [System.StringComparison]::Ordinal)) {
+      throw 'The extracted Node.js executable did not match the selected official release.'
+    }
+
+    if (-not (Test-Path -LiteralPath $nodeParent -PathType Container)) {
+      New-Item -ItemType Directory -Path $nodeParent | Out-Null
+    }
+    Move-Item -LiteralPath $extractedDirectory -Destination $finalDirectory
+    $installedNode = Get-CompatibleNodeInfo -Candidate (Join-Path $finalDirectory 'node.exe')
+    if ($null -eq $installedNode) { throw 'The portable Node.js installation could not be verified after extraction.' }
+    Write-Host ("Portable Node.js installed: {0} ({1})" -f $installedNode.Path, $installedNode.Version)
+    return $installedNode
+  } finally {
+    $ProgressPreference = $originalProgressPreference
+    [System.Net.ServicePointManager]::SecurityProtocol = $originalSecurityProtocol
+    Remove-NodeTemporaryDirectory -TemporaryDirectory $temporaryDirectory -RootPath $RootPath
+  }
 }
 
 function Invoke-NativeCommand {
@@ -315,6 +527,12 @@ function Invoke-Setup {
   if (Test-Path -LiteralPath $root -PathType Leaf) {
     throw "DestinationRoot points to a file: $root"
   }
+  if ($NodeOnly -and $DownloadOnly) {
+    throw 'NodeOnly and DownloadOnly cannot be used together.'
+  }
+  if ($NodeOnly -and -not $DownloadNode) {
+    throw 'NodeOnly requires DownloadNode.'
+  }
 
   if (-not [string]::IsNullOrWhiteSpace($HarnessRef)) {
     if ($HarnessRef.StartsWith('-', [System.StringComparison]::Ordinal) -or $HarnessRef -notmatch '^[A-Za-z0-9._/\-]{1,200}$') {
@@ -324,25 +542,49 @@ function Invoke-Setup {
 
   $harnessDir = Join-Path $root 'deepseek-harness'
   $dataDir = Join-Path $root 'deepseek-harness-data'
-  if (Test-Path -LiteralPath $harnessDir) {
+  if (-not $NodeOnly -and (Test-Path -LiteralPath $harnessDir)) {
     throw "Refusing to overwrite an existing Harness path: $harnessDir"
   }
 
-  $gitCommand = Get-Command git.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-  if ($null -eq $gitCommand) {
-    throw 'Git for Windows was not found. Install Git, then run setup again.'
+  $gitCommand = $null
+  if (-not $NodeOnly) {
+    $gitCommand = Get-Command git.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $gitCommand) {
+      throw 'Git for Windows was not found. Install Git, then run setup again.'
+    }
   }
-  $nodeInfo = Find-CompatibleNode
-
-  $confirmation = @(
-    'DeepSeek Harness will be downloaded from:',
-    $officialRepositoryUrl,
-    '',
-    "Program: $harnessDir",
-    "Data:    $dataDir",
-    "Node:    $($nodeInfo.Path) ($($nodeInfo.Version))"
-  )
+  $nodePlan = $null
+  $nodeInfo = $null
   if (-not $DownloadOnly) {
+    $nodePlan = Select-NodePlan -RootPath $root
+    if ($nodePlan.Mode -eq 'Existing') { $nodeInfo = $nodePlan.Info }
+  }
+
+  if ($NodeOnly) {
+    $confirmation = @(
+      'An official portable Node.js LTS release will be downloaded from:',
+      'https://nodejs.org/dist/',
+      '',
+      ("Destination: {0}" -f (Join-Path $root 'nodejs')),
+      'The ZIP must match the SHA-256 value in the official release manifest.'
+    )
+  } else {
+    $confirmation = @(
+      'DeepSeek Harness will be downloaded from:',
+      $officialRepositoryUrl,
+      '',
+      "Program: $harnessDir",
+      "Data:    $dataDir"
+    )
+    if (-not $DownloadOnly) {
+      if ($nodePlan.Mode -eq 'Download') {
+        $confirmation += "Node:    download official portable LTS to $(Join-Path $root 'nodejs')"
+      } else {
+        $confirmation += "Node:    $($nodeInfo.Path) ($($nodeInfo.Version))"
+      }
+    }
+  }
+  if (-not $DownloadOnly -and -not $NodeOnly) {
     $confirmation += @(
       '',
       'The official locked dependencies and reviewed install scripts will run before the project is built.'
@@ -351,13 +593,13 @@ function Invoke-Setup {
   $confirmation += @('', 'Continue?')
 
   if ($NonInteractive) {
-    if (-not $DownloadOnly -and -not $AcceptUpstreamScripts) {
+    if (-not $DownloadOnly -and -not $NodeOnly -and -not $AcceptUpstreamScripts) {
       throw 'AcceptUpstreamScripts is required for a non-interactive full installation.'
     }
   } else {
     $answer = [System.Windows.Forms.MessageBox]::Show(
       ($confirmation -join [Environment]::NewLine),
-      'Install DeepSeek Harness',
+      $(if ($NodeOnly) { 'Install portable Node.js' } else { 'Install DeepSeek Harness' }),
       [System.Windows.Forms.MessageBoxButtons]::YesNo,
       [System.Windows.Forms.MessageBoxIcon]::Question
     )
@@ -371,11 +613,22 @@ function Invoke-Setup {
   $driveRoot = [System.IO.Path]::GetPathRoot($root)
   try {
     $drive = New-Object System.IO.DriveInfo($driveRoot)
-    if ($drive.IsReady -and $drive.AvailableFreeSpace -lt $minimumFreeBytes) {
-      throw 'At least 4 GB of free space is required for the source checkout, dependencies, and build.'
+    $requiredFreeBytes = if ($NodeOnly) { 1GB } else { $minimumFreeBytes }
+    if ($drive.IsReady -and $drive.AvailableFreeSpace -lt $requiredFreeBytes) {
+      throw "At least $([math]::Round($requiredFreeBytes / 1GB)) GB of free space is required."
     }
   } catch [System.IO.IOException] {
     throw "Unable to inspect free space for: $driveRoot"
+  }
+
+  if ($null -ne $nodePlan -and $nodePlan.Mode -eq 'Download') {
+    $nodeInfo = Install-PortableNode -RootPath $root
+  }
+  if ($NodeOnly) {
+    $message = "Official portable Node.js was installed.`n`nPath: $($nodeInfo.Path)`nVersion: $($nodeInfo.Version)`n`nNo global PATH or system environment variables were changed."
+    Write-Output $message
+    Show-SetupMessage -Title 'Node.js installation complete' -Message $message -Icon Information
+    return
   }
 
   Write-Host '[1/6] Cloning the official DeepSeek Harness repository...'

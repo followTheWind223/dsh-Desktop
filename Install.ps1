@@ -60,9 +60,10 @@ function Find-EdgePath {
 
 $launcherScript = Join-Path $PSScriptRoot 'DeepSeek-Harness-Desktop.ps1'
 $entryExecutable = Join-Path $PSScriptRoot 'DSH-Desktop.exe'
+$uninstallExecutable = Join-Path $PSScriptRoot 'Uninstall-DSH-Desktop.exe'
 $iconPath = Join-Path $PSScriptRoot 'assets\deepseek-harness.ico'
 $configPath = Join-Path $PSScriptRoot 'launcher.config.json'
-foreach ($projectFile in @($launcherScript, $entryExecutable, $iconPath)) {
+foreach ($projectFile in @($launcherScript, $entryExecutable, $uninstallExecutable, $iconPath)) {
   if (-not (Test-Path -LiteralPath $projectFile -PathType Leaf)) {
     throw "The launcher package is incomplete: $projectFile"
   }
@@ -153,6 +154,7 @@ $shortcut.Save()
 Write-Output 'DeepSeek Harness desktop launcher configured.'
 Write-Output ("Launcher: {0}" -f $PSScriptRoot)
 Write-Output ("Entry EXE: {0}" -f $entryExecutable)
+Write-Output ("Uninstall: {0}" -f $uninstallExecutable)
 Write-Output ("Shortcut: {0}" -f $ShortcutPath)
 Write-Output ("Harness:  {0}" -f $HarnessDir)
 Write-Output ("Data:     {0}" -f $DataDir)

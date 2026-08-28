@@ -15,12 +15,16 @@ The launcher assumes the following local components are trusted:
 
 First-run setup additionally trusts the official DeepSeek Harness GitHub repository, the exact commit cloned from it, the package-manager version declared by that commit, its lockfile, and the registries referenced by that lockfile.
 
+When the user opts into portable Node.js installation, setup additionally trusts `https://nodejs.org/dist/`, its release index, checksum manifest, and selected LTS ZIP.
+
 It is designed to reduce accidental exposure to the network and accidental termination of unrelated processes. It does not defend against malware or another process already running with the same user's privileges.
 
 ## Security boundaries
 
 - Setup uses a hard-coded HTTPS URL for the official DeepSeek Harness repository and verifies the cloned `origin` and 40-character commit hash.
 - User-selected installation roots must be absolute local-drive paths. Network paths and existing Harness destinations are rejected.
+- Portable Node.js is downloaded only from the exact `nodejs.org` HTTPS host. Setup selects a compatible official LTS ZIP, enforces x64/ARM64 and size/path boundaries, and verifies SHA-256 against that release's official `SHASUMS256.txt` before extraction.
+- Portable Node.js stays under the user-selected root and is referenced by absolute path. Setup does not add it to the user or machine `PATH`.
 - Non-interactive full installation requires `-AcceptUpstreamScripts`; interactive installation displays the exact repository and target paths before cloning or running dependencies.
 - Setup accepts only a strict `pnpm@<semver>` package-manager declaration, uses `--frozen-lockfile`, and relies on the upstream workspace's strict dependency-build allowlist.
 - Setup runs the native pnpm audit and warns on high-severity findings. It never runs forced remediation or changes the upstream lockfile.
@@ -33,10 +37,13 @@ It is designed to reduce accidental exposure to the network and accidental termi
 - Edge cleanup matches the unique per-run `--user-data-dir` argument.
 - Installer inputs must be absolute paths. Existing configuration and shortcuts are not replaced without `-Force`.
 - The uninstaller validates shortcut ownership and never removes Harness source, session data, runtimes, or environment variables.
+- One-click launcher removal waits for and validates its own uninstaller process, verifies package markers, and deletes only a fixed allowlist of launcher files. Unknown files and Git metadata are retained.
 
 ## Known limitations
 
-`DSH-Desktop.exe` is reproducibly buildable from the included C# source but is not Authenticode-signed. Windows SmartScreen may identify it as an unknown publisher. Review the source and run `Build-Exe.ps1` locally if this is unacceptable.
+The included executables are reproducibly buildable from the included C# source but are not Authenticode-signed. Windows SmartScreen may identify them as unknown publishers. Review the source and run `Build-Exe.ps1` locally if this is unacceptable.
+
+Portable Node.js setup verifies the ZIP against `SHASUMS256.txt` delivered by the same official HTTPS release host. It does not currently verify the OpenPGP signature on the checksum manifest. Higher-assurance users should follow the Node.js project's binary-signature verification instructions or install a separately verified Node.js runtime and select its `node.exe`.
 
 The default setup follows the current upstream default branch, which can change. Higher-assurance deployments should pass a reviewed branch or tag through `-HarnessRef`, record the resulting commit printed by setup, and review upstream changes before updating.
 

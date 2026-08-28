@@ -16,12 +16,14 @@ $requiredFiles = @(
   'SECURITY.md',
   'Setup.ps1',
   'THIRD_PARTY_NOTICES.md',
+  'Uninstall-DSH-Desktop.exe',
   'Uninstall.ps1',
   'VERSION',
   'assets\deepseek-harness.ico',
   'assets\deepseek-harness.svg',
   'launcher.config.example.json',
-  'src\DSH-Desktop\Program.cs'
+  'src\DSH-Desktop\Program.cs',
+  'src\DSH-Desktop\UninstallProgram.cs'
 )
 
 foreach ($relativePath in $requiredFiles) {
@@ -58,19 +60,31 @@ if ([BitConverter]::ToUInt16($iconBytes, 2) -ne 1) { throw 'The Windows icon typ
 $imageCount = [BitConverter]::ToUInt16($iconBytes, 4)
 if ($imageCount -lt 1) { throw 'The Windows icon has no embedded images.' }
 
-$exePath = Join-Path $PSScriptRoot 'DSH-Desktop.exe'
-$exeBytes = [System.IO.File]::ReadAllBytes($exePath)
-if ($exeBytes.Length -lt 128) { throw 'DSH-Desktop.exe is truncated.' }
-if ($exeBytes[0] -ne 0x4D -or $exeBytes[1] -ne 0x5A) { throw 'DSH-Desktop.exe has an invalid DOS header.' }
-$peOffset = [BitConverter]::ToInt32($exeBytes, 0x3C)
-if ($peOffset -lt 0x40 -or $peOffset + 4 -gt $exeBytes.Length) { throw 'DSH-Desktop.exe has an invalid PE offset.' }
-if ([BitConverter]::ToUInt32($exeBytes, $peOffset) -ne 0x00004550) { throw 'DSH-Desktop.exe has an invalid PE signature.' }
-$versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exePath)
-if (-not [string]::Equals($versionInfo.FileVersion, '0.2.0.0', [System.StringComparison]::Ordinal)) {
-  throw "Unexpected DSH-Desktop.exe version: $($versionInfo.FileVersion)"
+function Assert-WindowsExecutable {
+  param(
+    [Parameter(Mandatory = $true)][string]$RelativePath,
+    [Parameter(Mandatory = $true)][string]$ExpectedVersion
+  )
+
+  $exePath = Join-Path $PSScriptRoot $RelativePath
+  $exeBytes = [System.IO.File]::ReadAllBytes($exePath)
+  if ($exeBytes.Length -lt 128) { throw "$RelativePath is truncated." }
+  if ($exeBytes[0] -ne 0x4D -or $exeBytes[1] -ne 0x5A) { throw "$RelativePath has an invalid DOS header." }
+  $peOffset = [BitConverter]::ToInt32($exeBytes, 0x3C)
+  if ($peOffset -lt 0x40 -or $peOffset + 4 -gt $exeBytes.Length) { throw "$RelativePath has an invalid PE offset." }
+  if ([BitConverter]::ToUInt32($exeBytes, $peOffset) -ne 0x00004550) { throw "$RelativePath has an invalid PE signature." }
+  $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exePath)
+  if (-not [string]::Equals($versionInfo.FileVersion, $ExpectedVersion, [System.StringComparison]::Ordinal)) {
+    throw "Unexpected $RelativePath version: $($versionInfo.FileVersion)"
+  }
+  return $versionInfo.FileVersion
 }
+
+$launcherVersion = Assert-WindowsExecutable -RelativePath 'DSH-Desktop.exe' -ExpectedVersion '0.3.0.0'
+$uninstallerVersion = Assert-WindowsExecutable -RelativePath 'Uninstall-DSH-Desktop.exe' -ExpectedVersion '0.3.0.0'
 
 Write-Output 'Release validation passed.'
 Write-Output ("PowerShell scripts: {0}" -f @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1' -File).Count)
 Write-Output ("Icon images:       {0}" -f $imageCount)
-Write-Output ("Entry executable:  {0}" -f $versionInfo.FileVersion)
+Write-Output ("Entry executable:  {0}" -f $launcherVersion)
+Write-Output ("Uninstaller:       {0}" -f $uninstallerVersion)

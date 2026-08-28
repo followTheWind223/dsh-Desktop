@@ -14,7 +14,7 @@
 
 - Windows 10/11、Windows PowerShell 5.1 和 Microsoft Edge。
 - [Git for Windows](https://git-scm.com/download/win)。
-- Node.js `^22.19.0` 或 `>=24.0.0`；Node 23 不在官方支持范围内。
+- Node.js 可选。已有兼容版本可以直接使用；没有时可让启动器下载官方便携 LTS。DSH 要求 `^22.19.0` 或 `>=24.0.0`，Node 23 不受支持。
 - 至少 4 GB 可用空间。
 
 然后下载本仓库 ZIP 并解压，或使用 Git：
@@ -27,25 +27,26 @@ git clone https://github.com/followTheWind223/dsh-Desktop.git D:\dsh-Desktop
 
 1. 弹出文件夹选择器，由用户选择 DSH 的安装位置。
 2. 只从 `https://github.com/deepseek-ai/deepseek-harness.git` 克隆官方源码。
-3. 自动寻找兼容的 Node.js。
-4. 读取上游 `packageManager`，使用其固定的 pnpm 版本和锁文件安装依赖。
-5. 执行官方构建，并检查必要产物。
-6. 创建本地配置和带图标的桌面快捷方式。
-7. 安装成功后直接打开 DSH。
+3. 让用户选择使用已发现的 Node.js、手动选择 `node.exe`，或从 `nodejs.org` 下载官方便携 LTS。
+4. 下载 Node.js 时自动选择 x64/ARM64 ZIP，核对官方 SHA-256 后解压到用户选择的区域。
+5. 读取上游 `packageManager`，使用其固定的 pnpm 版本和锁文件安装依赖。
+6. 执行官方构建，并检查必要产物。
+7. 创建本地配置和带图标的桌面快捷方式；安装成功后直接打开 DSH。
 
 例如选择 `D:\AI` 后，会使用：
 
 ```text
 D:\AI\deepseek-harness
 D:\AI\deepseek-harness-data
+D:\AI\nodejs\node-v<version>-win-<architecture>   # 仅选择便携 Node.js 时
 ```
 
 安装器不会覆盖已有的 `deepseek-harness` 目录，不修改全局 `PATH`，也不会硬编码或收集 API Key。
 
 ### Windows SmartScreen
 
-仓库中的 `DSH-Desktop.exe` 是从公开的 C# 源码构建，但目前没有商业代码签名证书。Windows
-SmartScreen 可能显示“未知发布者”。可以先检查 `src/DSH-Desktop/Program.cs`，再通过
+仓库中的 `DSH-Desktop.exe` 和 `Uninstall-DSH-Desktop.exe` 都从公开的 C# 源码构建，但目前没有商业代码签名证书。Windows
+SmartScreen 可能显示“未知发布者”。可以先检查 `src/DSH-Desktop`，再通过
 `Build-Exe.ps1` 在本机重新编译。
 
 ## 日常启动
@@ -72,12 +73,34 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Setup.ps1 `
 
 - `-DestinationRoot`：用户选择的父目录。
 - `-NodePath`：显式指定兼容的 `node.exe`。
+- `-DownloadNode`：从 `https://nodejs.org/dist/` 下载并校验最新兼容的官方便携 LTS。
+- `-NodeOnly`：只配置便携 Node.js；必须与 `-DownloadNode` 一起使用，不下载 DSH。
 - `-HarnessRef`：下载指定的上游分支或标签；默认使用官方默认分支。
 - `-DownloadOnly`：只克隆官方源码，不安装依赖、不构建、不创建快捷方式。
 - `-SkipAudit`：跳过上游依赖审计；不建议。
 - `-ForceLauncherConfig`：显式替换本项目已有的配置/快捷方式。
 
 非交互完整安装必须传入 `-AcceptUpstreamScripts`，以明确授权运行上游锁定依赖所允许的安装脚本。
+
+非交互安装并使用便携 Node.js：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Setup.ps1 `
+  -DestinationRoot 'D:\AI' `
+  -DownloadNode `
+  -NonInteractive `
+  -AcceptUpstreamScripts
+```
+
+只下载、校验并配置便携 Node.js：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Setup.ps1 `
+  -DestinationRoot 'D:\AI' `
+  -DownloadNode `
+  -NodeOnly `
+  -NonInteractive
+```
 
 ## 已有 DSH 源码时
 
@@ -94,6 +117,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 `
 
 ## 卸载
 
+双击 `Uninstall-DSH-Desktop.exe`，确认后会一键移除：
+
+- 桌面的 **DeepSeek Harness** 快捷方式；
+- `launcher.config.json`；
+- 本项目已知的启动器脚本、EXE、文档、图标和源码文件。
+
+卸载器使用严格文件白名单。若启动器目录包含 `.git` 或用户自己添加的文件，这些内容不会被删除，目录也会保留。
+
 只移除桌面快捷方式：
 
 ```powershell
@@ -106,7 +137,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Uninstall.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Uninstall.ps1 -RemoveConfig
 ```
 
-卸载脚本不会删除 DSH 源码、会话数据、Node.js、Edge 或环境变量。源码和数据必须由用户确认路径后自行处理。
+卸载器不会删除 DSH 源码、会话数据、便携 Node.js、Edge 或环境变量。源码、数据和 Node.js 必须由用户确认路径后自行处理。
 
 ## 配置文件
 
@@ -126,6 +157,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Uninstall.ps1 -RemoveConfi
 ## 安全设计
 
 - 下载地址固定为 DeepSeek 官方 HTTPS GitHub 仓库，并在克隆后再次校验 `origin` 和提交哈希。
+- 便携 Node.js 只从官方 `https://nodejs.org/dist/` 下载；版本来自官方索引，ZIP 必须匹配官方 `SHASUMS256.txt`，并通过归档路径与大小边界检查。
 - 用户选择的目标必须是本机绝对路径；网络路径和已有 DSH 目录会被拒绝。
 - 使用上游声明的精确 pnpm 版本、`pnpm-lock.yaml` 和 `--frozen-lockfile`。
 - 上游当前使用严格的依赖构建白名单；完整安装前仍要求用户明确确认。
@@ -133,6 +165,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Uninstall.ps1 -RemoveConfi
 - DSH 后端只绑定随机回环端口；启动器只接受严格的 `127.0.0.1` 信任 URL。
 - 信任令牌仅存在于进程内存和 Edge 启动参数中，不写入日志或配置。
 - 清理操作校验 Node 可执行文件、进程树、专用 Edge 参数和临时目录边界。
+- 一键卸载要求明确确认，只删除严格白名单中的启动器文件，任何未识别文件都会被保留。
 - 快捷方式中的执行策略只作用于对应 PowerShell 子进程，不修改系统全局策略。
 
 完整威胁模型及漏洞报告方式见 [SECURITY.md](SECURITY.md)。DeepSeek Harness 仍是 developer preview，使用前也应阅读其官方 `SAFETY.md`。
@@ -146,8 +179,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Exe.ps1
 ```
 
 构建脚本使用 Windows 自带的 .NET Framework C# 编译器，将官方鲸鱼 ICO 嵌入
-`DSH-Desktop.exe`。EXE 只负责从自身目录启动已公开的 `Setup.ps1` 或
-`DeepSeek-Harness-Desktop.ps1`，不内嵌下载地址、API Key 或隐藏脚本。
+`DSH-Desktop.exe` 和 `Uninstall-DSH-Desktop.exe`。两个 EXE 只负责调用同目录中公开的 PowerShell 脚本，不内嵌 API Key 或隐藏脚本。
 
 ## 开发与验证
 
@@ -162,7 +194,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Test-Release.ps1
 
 ## English summary
 
-This is an unofficial, MIT-licensed Windows setup and desktop entry point for DeepSeek Harness. On first run, `DSH-Desktop.exe` lets the user choose an installation root, clones only the official upstream repository, installs its frozen dependencies, builds it, and creates a desktop shortcut. Later runs open the official Web UI on a random loopback port in an isolated Microsoft Edge app window.
+This is an unofficial, MIT-licensed Windows setup and desktop entry point for DeepSeek Harness. On first run, `DSH-Desktop.exe` lets the user choose an installation root and either use an existing Node.js runtime or download a checksum-verified portable LTS from the official Node.js distribution site. `Uninstall-DSH-Desktop.exe` removes only known launcher files after confirmation while preserving Harness, data, Node.js, and unrecognized user files.
 
 ## License
 

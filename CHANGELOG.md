@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.3.0 - 2026-08-28
+
+- Added an interactive choice between an existing Node.js runtime and an official portable LTS download.
+- Added SHA-256 verification, archive path validation, x64/ARM64 selection, and process-local Node configuration.
+- Added `Uninstall-DSH-Desktop.exe` for confirmed one-click removal of known launcher files.
+- Preserved Harness source, session data, portable Node.js, Edge, environment variables, and unrecognized user files during uninstall.
+
 ## 0.2.0 - 2026-08-28
 
 - Added `DSH-Desktop.exe` as the unified first-run setup and daily launch entry point.

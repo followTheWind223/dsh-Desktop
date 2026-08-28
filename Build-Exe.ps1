@@ -2,22 +2,71 @@
 
 [CmdletBinding()]
 param(
-  [string]$OutputPath
+  [string]$OutputPath,
+  [string]$UninstallOutputPath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-  $OutputPath = Join-Path $PSScriptRoot 'DSH-Desktop.exe'
-} elseif (-not [System.IO.Path]::IsPathRooted($OutputPath)) {
-  $OutputPath = Join-Path $PSScriptRoot $OutputPath
-}
-$OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
+function Get-BuildOutputPath {
+  param(
+    [AllowNull()][string]$Value,
+    [Parameter(Mandatory = $true)][string]$DefaultName
+  )
 
-$sourcePath = Join-Path $PSScriptRoot 'src\DSH-Desktop\Program.cs'
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    $Value = Join-Path $PSScriptRoot $DefaultName
+  } elseif (-not [System.IO.Path]::IsPathRooted($Value)) {
+    $Value = Join-Path $PSScriptRoot $Value
+  }
+  $fullPath = [System.IO.Path]::GetFullPath($Value)
+  $parent = Split-Path -Parent $fullPath
+  if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
+    throw "The output directory does not exist: $parent"
+  }
+  return $fullPath
+}
+
+function Build-WindowsExecutable {
+  param(
+    [Parameter(Mandatory = $true)][string]$Compiler,
+    [Parameter(Mandatory = $true)][string]$SourcePath,
+    [Parameter(Mandatory = $true)][string]$IconPath,
+    [Parameter(Mandatory = $true)][string]$DestinationPath
+  )
+
+  $arguments = @(
+    '/nologo',
+    '/target:winexe',
+    '/optimize+',
+    '/platform:anycpu',
+    ('/win32icon:' + $IconPath),
+    '/reference:System.dll',
+    '/reference:System.Windows.Forms.dll',
+    ('/out:' + $DestinationPath),
+    $SourcePath
+  )
+  & $Compiler @arguments
+  if ($LASTEXITCODE -ne 0) {
+    throw "C# compilation failed with exit code $LASTEXITCODE for: $SourcePath"
+  }
+
+  $hash = (Get-FileHash -LiteralPath $DestinationPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  Write-Output ("Built:  {0}" -f $DestinationPath)
+  Write-Output ("SHA256: {0}" -f $hash)
+}
+
+$OutputPath = Get-BuildOutputPath -Value $OutputPath -DefaultName 'DSH-Desktop.exe'
+$UninstallOutputPath = Get-BuildOutputPath -Value $UninstallOutputPath -DefaultName 'Uninstall-DSH-Desktop.exe'
+if ([string]::Equals($OutputPath, $UninstallOutputPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+  throw 'The launcher and uninstaller output paths must be different.'
+}
+
+$launcherSource = Join-Path $PSScriptRoot 'src\DSH-Desktop\Program.cs'
+$uninstallerSource = Join-Path $PSScriptRoot 'src\DSH-Desktop\UninstallProgram.cs'
 $iconPath = Join-Path $PSScriptRoot 'assets\deepseek-harness.ico'
-foreach ($requiredPath in @($sourcePath, $iconPath)) {
+foreach ($requiredPath in @($launcherSource, $uninstallerSource, $iconPath)) {
   if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
     throw "Required build input is missing: $requiredPath"
   }
@@ -32,28 +81,6 @@ if ([string]::IsNullOrWhiteSpace($compiler)) {
   throw 'The .NET Framework C# compiler was not found.'
 }
 
-$outputParent = Split-Path -Parent $OutputPath
-if (-not (Test-Path -LiteralPath $outputParent -PathType Container)) {
-  throw "The output directory does not exist: $outputParent"
-}
-
-$arguments = @(
-  '/nologo',
-  '/target:winexe',
-  '/optimize+',
-  '/platform:anycpu',
-  ('/win32icon:' + $iconPath),
-  '/reference:System.dll',
-  '/reference:System.Windows.Forms.dll',
-  ('/out:' + $OutputPath),
-  $sourcePath
-)
-& $compiler @arguments
-if ($LASTEXITCODE -ne 0) {
-  throw "C# compilation failed with exit code $LASTEXITCODE."
-}
-
-$hash = (Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash.ToLowerInvariant()
-Write-Output ("Built:  {0}" -f $OutputPath)
-Write-Output ("SHA256: {0}" -f $hash)
-Write-Warning 'The executable is not code-signed. Windows SmartScreen may display a warning.'
+Build-WindowsExecutable -Compiler $compiler -SourcePath $launcherSource -IconPath $iconPath -DestinationPath $OutputPath
+Build-WindowsExecutable -Compiler $compiler -SourcePath $uninstallerSource -IconPath $iconPath -DestinationPath $UninstallOutputPath
+Write-Warning 'The executables are not code-signed. Windows SmartScreen may display a warning.'
