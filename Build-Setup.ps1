@@ -26,7 +26,8 @@ $embeddedPayload = @(
   'runtimes\win-x64\native\WebView2Loader.dll',
   'runtimes\win-arm64\native\WebView2Loader.dll',
   'Setup-GUI.ps1', 'Setup.ps1', 'Install.ps1', 'Ensure-WebView2.ps1', 'Uninstall.ps1',
-  'CHANGELOG.md', 'LICENSE', 'README.md', 'SECURITY.md', 'THIRD_PARTY_NOTICES.md', 'VERSION',
+  'CHANGELOG.md', 'CODE_SIGNING_POLICY.md', 'LICENSE', 'PRIVACY.md', 'README.md',
+  'SECURITY.md', 'THIRD_PARTY_NOTICES.md', 'VERSION',
   'assets\deepseek-harness.ico', 'assets\deepseek-harness.svg'
 )
 foreach ($relative in $embeddedPayload) {

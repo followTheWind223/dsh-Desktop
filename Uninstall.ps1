@@ -137,11 +137,11 @@ function Remove-KnownLauncherFiles {
   $knownFiles = @(
     '.gitattributes', '.gitignore', '.github\workflows\release.yml',
     'Build-Exe.ps1', 'Build-Setup.ps1', 'Build-Release.ps1', 'Test-Release.ps1',
-    'CHANGELOG.md', 'CONTRIBUTING.md', 'DeepSeek-Harness-Desktop.ps1',
+    'CHANGELOG.md', 'CODE_SIGNING_POLICY.md', 'CONTRIBUTING.md', 'DeepSeek-Harness-Desktop.ps1',
     'DSH-Desktop.exe', 'DSH-Desktop.exe.config', 'DSH-Setup.exe', 'Uninstall-DSH-Desktop.exe',
     'Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll',
     'Install.ps1', 'Setup.ps1', 'Setup-GUI.ps1', 'Ensure-WebView2.ps1', 'Uninstall.ps1',
-    'LICENSE', 'README.md', 'SECURITY.md', 'SHA256SUMS.txt', 'THIRD_PARTY_NOTICES.md', 'VERSION',
+    'LICENSE', 'PRIVACY.md', 'README.md', 'SECURITY.md', 'SHA256SUMS.txt', 'THIRD_PARTY_NOTICES.md', 'VERSION',
     'launcher.config.example.json', 'launcher.config.json',
     'assets\deepseek-harness.ico', 'assets\deepseek-harness.svg',
     'runtimes\win-x86\native\WebView2Loader.dll',

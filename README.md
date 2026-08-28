@@ -4,6 +4,10 @@ DSH Desktop 是一个面向 Windows 10/11 的非官方开源 DeepSeek Harness �
 
 本项目不隶属于 DeepSeek，也不代表 DeepSeek 官方立场。仓库地址：[followTheWind223/dsh-Desktop](https://github.com/followTheWind223/dsh-Desktop)。
 
+## Code signing policy
+
+For approved signed releases: Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Releases published before the signing integration is approved remain unsigned and are identified as such in the release documentation. See the full [Code signing policy](CODE_SIGNING_POLICY.md) and [Privacy policy](PRIVACY.md).
+
 ## v0.4.1 主要功能
 
 - 高 DPI 清晰渲染：启用 Per-Monitor V2，在 125%、150%、175% 等 Windows 缩放比例下按显示器原生像素重绘 WebView2，避免系统位图拉伸造成文字发虚。
@@ -19,6 +23,8 @@ DSH Desktop 是一个面向 Windows 10/11 的非官方开源 DeepSeek Harness �
 - 单文件与便携包：Release 同时提供一个安装器 EXE 和一个可完整解压运行的 ZIP。
 
 ## 下载与安装
+
+签名状态、签名责任人与发布验证流程见 [Code signing policy](CODE_SIGNING_POLICY.md)。SignPath 接入获批前发布的 EXE 仍为未签名版本。
 
 从 [GitHub Releases](https://github.com/followTheWind223/dsh-Desktop/releases/latest) 下载以下任一文件：
 
