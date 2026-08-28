@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.4.1 - 2026-08-28
+
+- Enabled Per-Monitor V2 DPI awareness for the native desktop host so WebView2 renders at the monitor's native scale instead of being bitmap-stretched by Windows.
+- Added Windows 10 compatibility metadata and DPI-based WinForms auto-scaling for correct behavior across monitors with different scale factors.
+- Added release validation that prevents builds from shipping without the high-DPI runtime configuration and embedded compatibility manifest.
+
 ## 0.4.0 - 2026-08-28
 
 - Replaced the Edge app-mode launcher with a native .NET Framework WinForms + WebView2 desktop host.

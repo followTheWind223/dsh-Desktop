@@ -6,6 +6,7 @@
     <AssemblyName>DSH-Desktop</AssemblyName>
     <RootNamespace>DSHDesktop</RootNamespace>
     <ApplicationIcon>..\..\assets\deepseek-harness.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <LangVersion>latest</LangVersion>
     <PlatformTarget>AnyCPU</PlatformTarget>

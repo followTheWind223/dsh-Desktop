@@ -4,7 +4,9 @@ DSH Desktop 是一个面向 Windows 10/11 的非官方开源 DeepSeek Harness �
 
 本项目不隶属于 DeepSeek，也不代表 DeepSeek 官方立场。仓库地址：[followTheWind223/dsh-Desktop](https://github.com/followTheWind223/dsh-Desktop)。
 
-## v0.4.0 主要功能
+## v0.4.1 主要功能
+
+- 高 DPI 清晰渲染：启用 Per-Monitor V2，在 125%、150%、175% 等 Windows 缩放比例下按显示器原生像素重绘 WebView2，避免系统位图拉伸造成文字发虚。
 
 - 原生桌面窗口：不再用 Edge `--app` 模式，直接使用 Microsoft WebView2 承载 Harness。
 - 图形安装器：用户可选择安装区域、界面语言、Node.js 方案、桌面快捷方式和开始菜单入口。

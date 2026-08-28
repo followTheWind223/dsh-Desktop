@@ -30,6 +30,23 @@ if (Test-Path -LiteralPath (Join-Path $PackageRoot 'launcher.config.json')) {
   throw 'launcher.config.json contains local paths and must not be included in a release.'
 }
 
+$desktopConfig = Get-Content -LiteralPath (Join-Path $PackageRoot 'DSH-Desktop.exe.config') -Raw
+if ($desktopConfig -notmatch '<add\s+key="DpiAwareness"\s+value="PerMonitorV2"\s*/>') {
+  throw 'DSH-Desktop.exe.config does not enable PerMonitorV2 DPI awareness.'
+}
+
+$projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$desktopProject = Join-Path $projectRoot 'src\DSH-Desktop\DSH-Desktop.csproj'
+$desktopManifest = Join-Path $projectRoot 'src\DSH-Desktop\app.manifest'
+if ((Test-Path -LiteralPath $desktopProject -PathType Leaf) -and
+    (Get-Content -LiteralPath $desktopProject -Raw) -notmatch '<ApplicationManifest>app\.manifest</ApplicationManifest>') {
+  throw 'DSH-Desktop.csproj does not embed the application manifest.'
+}
+if ((Test-Path -LiteralPath $desktopManifest -PathType Leaf) -and
+    (Get-Content -LiteralPath $desktopManifest -Raw) -notmatch '\{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a\}') {
+  throw 'The application manifest does not declare Windows 10 compatibility.'
+}
+
 foreach ($script in (Get-ChildItem -LiteralPath $PackageRoot -Filter '*.ps1' -File)) {
   $tokens = $null
   $errors = $null

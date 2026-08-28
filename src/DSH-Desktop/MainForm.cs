@@ -30,6 +30,7 @@ namespace DSHDesktop
 
             Text = "DeepSeek Harness";
             StartPosition = FormStartPosition.CenterScreen;
+            AutoScaleMode = AutoScaleMode.Dpi;
             ClientSize = new Size(1200, 800);
             MinimumSize = new Size(900, 600);
             BackColor = Color.FromArgb(246, 247, 249);
