@@ -1,0 +1,6 @@
+{
+  "HarnessDir": "D:\\deepseek-harness",
+  "DataDir": "D:\\deepseek-harness-data",
+  "NodePath": "D:\\path\\to\\node.exe",
+  "EdgePath": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
+}

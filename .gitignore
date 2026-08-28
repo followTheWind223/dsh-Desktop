@@ -1,0 +1,11 @@
+launcher.config.json
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+*.pfx
+*.p12
+*.zip
+.DS_Store
+Thumbs.db
