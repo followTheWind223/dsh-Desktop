@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    name: Build and publish Windows release
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Build and validate release package
+        shell: powershell
+        run: .\Build-Release.ps1 -Tag $env:GITHUB_REF_NAME
+
+      - name: Create or update GitHub Release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:GITHUB_REF_NAME
+          $repository = $env:GITHUB_REPOSITORY
+          $assets = @(Get-ChildItem -LiteralPath .\artifacts -File | Sort-Object Name)
+          if ($assets.Count -ne 2) {
+            throw "Expected exactly two release assets, found $($assets.Count)."
+          }
+          $assetPaths = @($assets | ForEach-Object { $_.FullName })
+
+          gh release view $tag --repo $repository 1>$null 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @assetPaths --clobber --repo $repository
+          } else {
+            gh release create $tag @assetPaths --verify-tag --generate-notes `
+              --title "DSH Desktop $tag" --repo $repository
+          }
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub Release publishing failed with exit code $LASTEXITCODE."
+          }

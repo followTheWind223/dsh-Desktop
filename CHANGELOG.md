@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - Added SHA-256 verification, archive path validation, x64/ARM64 selection, and process-local Node configuration.
 - Added `Uninstall-DSH-Desktop.exe` for confirmed one-click removal of known launcher files.
 - Preserved Harness source, session data, portable Node.js, Edge, environment variables, and unrecognized user files during uninstall.
+- Added an automated GitHub Release workflow with clean Windows builds, release validation, ZIP packaging, and SHA-256 checksums.
 
 ## 0.2.0 - 2026-08-28
 

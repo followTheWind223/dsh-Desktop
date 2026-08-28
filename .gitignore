@@ -8,5 +8,6 @@ launcher.config.json
 *.p12
 *.tmp
 *.zip
+/artifacts/
 .DS_Store
 Thumbs.db

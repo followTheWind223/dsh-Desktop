@@ -8,6 +8,22 @@
 
 > 本项目不隶属于 DeepSeek，也不代表 DeepSeek 官方立场。
 
+## 下载 Release
+
+普通用户建议从 [GitHub Releases](https://github.com/followTheWind223/dsh-Desktop/releases/latest) 下载
+`DSH-Desktop-v<版本>-windows.zip`，完整解压后双击 `DSH-Desktop.exe`。不要只单独下载或复制 EXE，
+因为入口文件还需要压缩包内的 PowerShell 脚本。
+
+每个 Release 同时提供 ZIP 的 `.sha256` 文件，压缩包内部的 `SHA256SUMS.txt` 则记录两个 EXE 的校验值。
+例如验证下载的 ZIP：
+
+```powershell
+(Get-FileHash .\DSH-Desktop-v0.3.0-windows.zip -Algorithm SHA256).Hash
+Get-Content .\DSH-Desktop-v0.3.0-windows.zip.sha256
+```
+
+两处哈希值应完全一致。当前 EXE 未进行商业代码签名，Windows SmartScreen 仍可能显示“未知发布者”。
+
 ## 最快安装
 
 先准备：
@@ -180,6 +196,27 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Exe.ps1
 
 构建脚本使用 Windows 自带的 .NET Framework C# 编译器，将官方鲸鱼 ICO 嵌入
 `DSH-Desktop.exe` 和 `Uninstall-DSH-Desktop.exe`。两个 EXE 只负责调用同目录中公开的 PowerShell 脚本，不内嵌 API Key 或隐藏脚本。
+
+## 发布 Release
+
+维护者可以先在本机生成与 GitHub Actions 相同结构的发布包：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1
+```
+
+产物会写入忽略版本控制的 `artifacts` 目录。正式发布时，先同步 `VERSION`、`CHANGELOG.md` 和两个 C#
+入口文件中的版本号，提交并推送 `main`，然后创建与 `VERSION` 完全匹配的标签：
+
+```powershell
+$version = (Get-Content .\VERSION -Raw).Trim()
+git tag -a "v$version" -m "DSH Desktop v$version"
+git push origin main
+git push origin "v$version"
+```
+
+标签推送后，GitHub Actions 会在干净的 Windows Runner 中重新构建和验证文件，生成 ZIP 与 SHA-256，
+并自动创建对应的 GitHub Release。工作流只使用仓库临时 `GITHUB_TOKEN`，无需保存个人访问令牌。
 
 ## 开发与验证
 

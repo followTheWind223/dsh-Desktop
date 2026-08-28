@@ -63,7 +63,9 @@ function Remove-KnownLauncherFiles {
   $knownFiles = @(
     '.gitattributes',
     '.gitignore',
+    '.github\workflows\release.yml',
     'Build-Exe.ps1',
+    'Build-Release.ps1',
     'CHANGELOG.md',
     'CONTRIBUTING.md',
     'DeepSeek-Harness-Desktop.ps1',
@@ -72,6 +74,7 @@ function Remove-KnownLauncherFiles {
     'LICENSE',
     'README.md',
     'SECURITY.md',
+    'SHA256SUMS.txt',
     'Setup.ps1',
     'Test-Release.ps1',
     'THIRD_PARTY_NOTICES.md',
@@ -96,6 +99,8 @@ function Remove-KnownLauncherFiles {
   }
 
   Remove-EmptyDirectory -Path (Join-Path $launcherRoot 'assets')
+  Remove-EmptyDirectory -Path (Join-Path $launcherRoot '.github\workflows')
+  Remove-EmptyDirectory -Path (Join-Path $launcherRoot '.github')
   Remove-EmptyDirectory -Path (Join-Path $launcherRoot 'src\DSH-Desktop')
   Remove-EmptyDirectory -Path (Join-Path $launcherRoot 'src')
 
