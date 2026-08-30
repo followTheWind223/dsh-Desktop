@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.4.4 - 2026-08-30
+
+- Fixed uninstall detection when the uninstaller is launched from a different extracted package or source checkout than the configured desktop app.
+- Added a per-user Windows install record and safe fallback discovery through owned desktop and Start menu shortcuts.
+- Redirected cleanup to the verified installed uninstaller so component ownership and path checks remain bound to the correct installation.
+
 ## 0.4.3 - 2026-08-30
 
 - Fixed first-run setup failing with “Illegal characters in path” when `DSH-Desktop.exe` forwarded a portable directory ending in a backslash.

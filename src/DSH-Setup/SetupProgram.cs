@@ -12,8 +12,8 @@ using System.Windows.Forms;
 [assembly: AssemblyCompany("DSH Desktop contributors")]
 [assembly: AssemblyProduct("DSH Desktop")]
 [assembly: AssemblyCopyright("Copyright (c) 2026 DSH Desktop contributors")]
-[assembly: AssemblyVersion("0.4.3.0")]
-[assembly: AssemblyFileVersion("0.4.3.0")]
+[assembly: AssemblyVersion("0.4.4.0")]
+[assembly: AssemblyFileVersion("0.4.4.0")]
 
 internal static class SetupProgram
 {

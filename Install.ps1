@@ -123,6 +123,40 @@ function Remove-LauncherShortcut {
   Remove-Item -LiteralPath $Path -Force
 }
 
+function Set-InstallRecord {
+  param(
+    [Parameter(Mandatory = $true)][string]$InstallLocation,
+    [Parameter(Mandatory = $true)][string]$EntryExecutable,
+    [Parameter(Mandatory = $true)][string]$UninstallExecutable
+  )
+
+  $registryPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\DSH Desktop'
+  $versionPath = Join-Path $InstallLocation 'VERSION'
+  $displayVersion = if (Test-Path -LiteralPath $versionPath -PathType Leaf) {
+    ([string](Get-Content -LiteralPath $versionPath -Raw -Encoding UTF8)).Trim()
+  } else { 'unknown' }
+
+  try {
+    New-Item -Path $registryPath -Force | Out-Null
+    $values = [ordered]@{
+      DisplayName = 'DSH Desktop'
+      DisplayVersion = $displayVersion
+      Publisher = 'DSH Desktop contributors'
+      InstallLocation = $InstallLocation
+      DisplayIcon = $EntryExecutable + ',0'
+      UninstallString = '"' + $UninstallExecutable + '"'
+      NoModify = 1
+      NoRepair = 1
+    }
+    foreach ($entry in $values.GetEnumerator()) {
+      $propertyType = if ($entry.Key -in @('NoModify', 'NoRepair')) { 'DWord' } else { 'String' }
+      New-ItemProperty -Path $registryPath -Name $entry.Key -Value $entry.Value -PropertyType $propertyType -Force | Out-Null
+    }
+  } catch {
+    Write-Warning "DSH Desktop was configured, but its per-user install record could not be written: $($_.Exception.Message)"
+  }
+}
+
 $entryExecutable = Join-Path $PSScriptRoot 'DSH-Desktop.exe'
 $setupExecutable = Join-Path $PSScriptRoot 'DSH-Setup.exe'
 $uninstallExecutable = Join-Path $PSScriptRoot 'Uninstall-DSH-Desktop.exe'
@@ -252,6 +286,8 @@ if ($RemoveStartMenuShortcut) {
     Remove-Item -LiteralPath $startMenuDirectory -Force
   }
 }
+
+Set-InstallRecord -InstallLocation $PSScriptRoot -EntryExecutable $entryExecutable -UninstallExecutable $uninstallExecutable
 
 Write-Output 'DSH Desktop configured.'
 Write-Output ("Launcher: {0}" -f $PSScriptRoot)

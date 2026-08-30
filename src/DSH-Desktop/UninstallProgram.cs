@@ -4,16 +4,18 @@ using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 [assembly: AssemblyTitle("Uninstall DSH Desktop")]
 [assembly: AssemblyDescription("Safe one-click uninstaller for DSH Desktop")]
 [assembly: AssemblyCompany("DSH Desktop contributors")]
 [assembly: AssemblyProduct("DSH Desktop")]
 [assembly: AssemblyCopyright("Copyright (c) 2026 DSH Desktop contributors")]
-[assembly: AssemblyVersion("0.4.3.0")]
-[assembly: AssemblyFileVersion("0.4.3.0")]
+[assembly: AssemblyVersion("0.4.4.0")]
+[assembly: AssemblyFileVersion("0.4.4.0")]
 
 internal sealed class UninstallConfiguration
 {
@@ -300,6 +302,8 @@ internal sealed class UninstallForm : Form
 
 internal static class UninstallProgram
 {
+    private const string InstallRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\DSH Desktop";
+
     [STAThread]
     private static int Main()
     {
@@ -309,7 +313,17 @@ internal static class UninstallProgram
 
         try
         {
-            string launcherDirectory = Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory);
+            string currentDirectory = Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory);
+            string launcherDirectory = ResolveLauncherDirectory(currentDirectory);
+            if (!string.Equals(
+                currentDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                launcherDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                StringComparison.OrdinalIgnoreCase))
+            {
+                LaunchInstalledUninstaller(launcherDirectory);
+                return 0;
+            }
+
             string uninstallScript = Path.Combine(launcherDirectory, "Uninstall.ps1");
             RequireFile(uninstallScript, "Uninstall.ps1 is missing.");
             UninstallConfiguration configuration = LoadConfiguration(Path.Combine(launcherDirectory, "launcher.config.json"));
@@ -332,6 +346,155 @@ internal static class UninstallProgram
             );
             return 1;
         }
+    }
+
+    private static string ResolveLauncherDirectory(string currentDirectory)
+    {
+        string normalizedCurrent;
+        if (TryValidateLauncherDirectory(currentDirectory, out normalizedCurrent)) { return normalizedCurrent; }
+
+        string registryDirectory = GetRegisteredLauncherDirectory();
+        string normalizedRegistered;
+        if (TryValidateLauncherDirectory(registryDirectory, out normalizedRegistered)) { return normalizedRegistered; }
+
+        foreach (string shortcutPath in GetKnownShortcutPaths())
+        {
+            string targetPath = GetShortcutTarget(shortcutPath);
+            if (string.IsNullOrWhiteSpace(targetPath) ||
+                !string.Equals(Path.GetFileName(targetPath), "DSH-Desktop.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string shortcutDirectory = Path.GetDirectoryName(targetPath);
+            string normalizedShortcutDirectory;
+            if (TryValidateLauncherDirectory(shortcutDirectory, out normalizedShortcutDirectory))
+            {
+                return normalizedShortcutDirectory;
+            }
+        }
+
+        return currentDirectory;
+    }
+
+    private static string GetRegisteredLauncherDirectory()
+    {
+        try
+        {
+            using (RegistryKey key = Registry.CurrentUser.OpenSubKey(InstallRegistryPath, false))
+            {
+                return key == null ? null : key.GetValue("InstallLocation") as string;
+            }
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string[] GetKnownShortcutPaths()
+    {
+        return new[]
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "DeepSeek Harness.lnk"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "DSH Desktop", "DeepSeek Harness.lnk")
+        };
+    }
+
+    private static string GetShortcutTarget(string shortcutPath)
+    {
+        if (!File.Exists(shortcutPath)) { return null; }
+
+        object shell = null;
+        object shortcut = null;
+        try
+        {
+            Type shellType = Type.GetTypeFromProgID("WScript.Shell", false);
+            if (shellType == null) { return null; }
+            shell = Activator.CreateInstance(shellType);
+            shortcut = shellType.InvokeMember(
+                "CreateShortcut",
+                BindingFlags.InvokeMethod,
+                null,
+                shell,
+                new object[] { shortcutPath },
+                CultureInfo.InvariantCulture);
+            if (shortcut == null) { return null; }
+            return shortcut.GetType().InvokeMember(
+                "TargetPath",
+                BindingFlags.GetProperty,
+                null,
+                shortcut,
+                null,
+                CultureInfo.InvariantCulture) as string;
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            if (shortcut != null && Marshal.IsComObject(shortcut)) { Marshal.FinalReleaseComObject(shortcut); }
+            if (shell != null && Marshal.IsComObject(shell)) { Marshal.FinalReleaseComObject(shell); }
+        }
+    }
+
+    private static bool TryValidateLauncherDirectory(string value, out string launcherDirectory)
+    {
+        launcherDirectory = null;
+        if (string.IsNullOrWhiteSpace(value)) { return false; }
+
+        try
+        {
+            string candidate = Path.GetFullPath(value)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string root = Path.GetPathRoot(candidate)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (candidate.StartsWith(@"\\", StringComparison.Ordinal) ||
+                string.Equals(candidate, root, StringComparison.OrdinalIgnoreCase) ||
+                !Directory.Exists(candidate))
+            {
+                return false;
+            }
+
+            FileAttributes attributes = File.GetAttributes(candidate);
+            if ((attributes & FileAttributes.ReparsePoint) != 0) { return false; }
+
+            foreach (string marker in new[]
+            {
+                "launcher.config.json",
+                "DSH-Desktop.exe",
+                "Uninstall-DSH-Desktop.exe",
+                "Uninstall.ps1"
+            })
+            {
+                if (!File.Exists(Path.Combine(candidate, marker))) { return false; }
+            }
+
+            UninstallConfiguration configuration = LoadConfiguration(Path.Combine(candidate, "launcher.config.json"));
+            if (configuration == null || string.IsNullOrWhiteSpace(configuration.HarnessDir)) { return false; }
+
+            launcherDirectory = candidate;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void LaunchInstalledUninstaller(string launcherDirectory)
+    {
+        string installedUninstaller = Path.Combine(launcherDirectory, "Uninstall-DSH-Desktop.exe");
+        RequireFile(installedUninstaller, "The installed DSH Desktop uninstaller is missing.");
+        Process process = Process.Start(new ProcessStartInfo
+        {
+            FileName = installedUninstaller,
+            WorkingDirectory = launcherDirectory,
+            UseShellExecute = true
+        });
+        if (process == null) { throw new InvalidOperationException("Unable to start the installed DSH Desktop uninstaller."); }
+        process.Dispose();
     }
 
     private static UninstallConfiguration LoadConfiguration(string path)

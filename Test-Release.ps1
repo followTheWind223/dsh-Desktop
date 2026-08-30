@@ -133,7 +133,69 @@ $uninstallerMetadata = [System.Text.Encoding]::Unicode.GetString(
 )
 foreach ($requiredText in @('RemoveHarness', 'ConfirmExistingHarnessRemoval')) {
   if ($uninstallerMetadata.IndexOf($requiredText, [System.StringComparison]::Ordinal) -lt 0) {
-    throw "Uninstall-DSH-Desktop.exe is missing expected Harness-removal behavior: $requiredText"
+    throw "Uninstall-DSH-Desktop.exe is missing expected uninstall behavior: $requiredText"
+  }
+}
+
+$uninstallerAssembly = [System.Reflection.Assembly]::Load(
+  [System.IO.File]::ReadAllBytes((Join-Path $PackageRoot 'Uninstall-DSH-Desktop.exe'))
+)
+$uninstallerType = $uninstallerAssembly.GetType('UninstallProgram', $true)
+$validateLauncher = $uninstallerType.GetMethod(
+  'TryValidateLauncherDirectory',
+  [System.Reflection.BindingFlags]'Static,NonPublic'
+)
+if ($null -eq $validateLauncher) { throw 'Uninstall-DSH-Desktop.exe does not expose the launcher validation helper.' }
+
+$invalidArguments = [object[]]@([string]$PackageRoot, $null)
+if ([bool]$validateLauncher.Invoke($null, $invalidArguments)) {
+  throw 'The uninstaller accepted a package directory without launcher.config.json as an installed app.'
+}
+
+$fixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('dsh-install-fixture-' + [Guid]::NewGuid().ToString('N'))
+try {
+  New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
+  foreach ($relative in @('DSH-Desktop.exe', 'Uninstall-DSH-Desktop.exe', 'Uninstall.ps1')) {
+    Copy-Item -LiteralPath (Join-Path $PackageRoot $relative) -Destination (Join-Path $fixtureRoot $relative)
+  }
+  $fixtureConfig = [ordered]@{
+    SchemaVersion = 2
+    HarnessDir = 'C:\deepseek-harness'
+    DataDir = 'C:\deepseek-harness-data'
+    NodePath = 'C:\nodejs\node.exe'
+    HarnessManaged = $false
+    DataManaged = $false
+    NodeManaged = $false
+  } | ConvertTo-Json
+  [System.IO.File]::WriteAllText(
+    (Join-Path $fixtureRoot 'launcher.config.json'),
+    $fixtureConfig,
+    (New-Object System.Text.UTF8Encoding($false))
+  )
+
+  $validArguments = [object[]]@([string]$fixtureRoot, $null)
+  if (-not [bool]$validateLauncher.Invoke($null, $validArguments)) {
+    throw 'The uninstaller did not accept a complete launcher installation fixture.'
+  }
+  $expectedFixture = [System.IO.Path]::GetFullPath($fixtureRoot).TrimEnd('\')
+  if (-not [string]::Equals([string]$validArguments[1], $expectedFixture, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw 'The uninstaller returned an unexpected normalized installation directory.'
+  }
+} finally {
+  $resolvedFixture = [System.IO.Path]::GetFullPath($fixtureRoot)
+  $resolvedTemp = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+  if ($resolvedFixture.StartsWith($resolvedTemp, [System.StringComparison]::OrdinalIgnoreCase) -and
+      (Test-Path -LiteralPath $resolvedFixture -PathType Container)) {
+    Remove-Item -LiteralPath $resolvedFixture -Recurse -Force
+  }
+}
+
+$installScript = Get-Content -LiteralPath (Join-Path $PackageRoot 'Install.ps1') -Raw -Encoding UTF8
+$uninstallScript = Get-Content -LiteralPath (Join-Path $PackageRoot 'Uninstall.ps1') -Raw -Encoding UTF8
+foreach ($requiredScriptText in @('CurrentVersion\Uninstall\DSH Desktop', 'InstallLocation')) {
+  if ($installScript.IndexOf($requiredScriptText, [System.StringComparison]::Ordinal) -lt 0 -or
+      $uninstallScript.IndexOf($requiredScriptText, [System.StringComparison]::Ordinal) -lt 0) {
+    throw "Install/uninstall scripts are missing the per-user install record behavior: $requiredScriptText"
   }
 }
 foreach ($relative in @(

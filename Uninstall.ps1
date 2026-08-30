@@ -198,6 +198,26 @@ function Remove-KnownLauncherFiles {
   return $remaining
 }
 
+function Remove-InstallRecord {
+  param([Parameter(Mandatory = $true)][string]$LauncherRoot)
+
+  $registryPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\DSH Desktop'
+  if (-not (Test-Path -LiteralPath $registryPath)) { return }
+
+  try {
+    $record = Get-ItemProperty -LiteralPath $registryPath -ErrorAction Stop
+    $registeredLocation = Get-SafeLocalPath -Value ([string]$record.InstallLocation) -Name 'registered install location'
+    if (-not [string]::Equals($registeredLocation, $LauncherRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+      Write-Warning "A DSH Desktop install record for another folder was left unchanged: $registeredLocation"
+      return
+    }
+    Remove-Item -LiteralPath $registryPath -Force
+    Write-Output "Removed per-user install record: $registryPath"
+  } catch {
+    Write-Warning "The per-user install record could not be removed safely: $($_.Exception.Message)"
+  }
+}
+
 try {
   if ($RemoveLauncherFiles -and -not $RemoveConfig) { throw 'RemoveLauncherFiles requires RemoveConfig.' }
   $launcherRoot = Get-SafeLocalPath -Value $PSScriptRoot -Name 'launcher directory'
@@ -264,6 +284,7 @@ try {
   }
   $remaining = $null
   if ($RemoveLauncherFiles) { $remaining = Remove-KnownLauncherFiles -LauncherRoot $launcherRoot }
+  if ($RemoveConfig) { Remove-InstallRecord -LauncherRoot $launcherRoot }
 
   $english = if ($RemoveLauncherFiles -and $remaining -eq -1) {
     'DSH Desktop configuration and shortcuts were removed. The Git source checkout was preserved.'

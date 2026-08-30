@@ -8,7 +8,7 @@ DSH Desktop 是一个面向 Windows 10/11 的非官方开源 DeepSeek Harness �
 
 For approved signed releases: Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Releases published before the signing integration is approved remain unsigned and are identified as such in the release documentation. See the full [Code signing policy](CODE_SIGNING_POLICY.md) and [Privacy policy](PRIVACY.md).
 
-## v0.4.3 主要功能
+## v0.4.4 主要功能
 
 - 高 DPI 清晰渲染：启用 Per-Monitor V2，在 125%、150%、175% 等 Windows 缩放比例下按显示器原生像素重绘 WebView2，避免系统位图拉伸造成文字发虚。
 
@@ -20,6 +20,7 @@ For approved signed releases: Free code signing provided by [SignPath.io](https:
 - 双语界面：默认跟随 Windows 自动切换简体中文/English，也可手动指定。
 - 可选入口：即使不创建任何快捷方式，也可以从安装目录运行 `DSH-Desktop.exe`。
 - 安全卸载：默认只删除桌面端、配置和快捷方式；用户可选择是否删除 Harness，已有 Harness 会显示完整路径并要求二次确认；便携 Node.js 和数据仍只允许删除安装器自己创建并记录的组件。
+- 安装识别：安装时写入当前用户的 Windows 安装记录；即使误从另一份解压包或源码目录打开卸载器，也会验证配置与程序标记后自动切换到真正的安装目录。
 - 单文件与便携包：Release 同时提供一个安装器 EXE 和一个可完整解压运行的 ZIP。
 - 路径兼容：修复首次从便携包启动时，安装目录末尾反斜杠被错误解析为引号而导致“路径中具有非法字符”的问题，覆盖空格、中文和盘符根目录。
 
