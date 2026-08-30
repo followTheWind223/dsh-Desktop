@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.4.3 - 2026-08-30
+
+- Fixed first-run setup failing with “Illegal characters in path” when `DSH-Desktop.exe` forwarded a portable directory ending in a backslash.
+- Correctly escaped trailing backslashes in quoted Windows process arguments across the desktop launcher, setup entry point, and uninstaller.
+- Added release regression checks for paths containing spaces, Chinese characters, and drive roots.
+
 ## 0.4.2 - 2026-08-30
 
 - Allowed users to explicitly remove a verified existing Harness during uninstall, even when it was reused rather than downloaded by DSH Desktop.

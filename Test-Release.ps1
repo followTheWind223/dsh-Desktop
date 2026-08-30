@@ -94,12 +94,46 @@ function Assert-PortableExecutable {
 foreach ($relative in @('DSH-Desktop.exe', 'DSH-Setup.exe', 'Uninstall-DSH-Desktop.exe')) {
   Assert-PortableExecutable -RelativePath $relative -ExpectedVersion $expectedFileVersion
 }
+
+function Assert-TrailingBackslashQuoting {
+  param(
+    [Parameter(Mandatory = $true)][string]$RelativePath,
+    [Parameter(Mandatory = $true)][string]$TypeName
+  )
+  $assemblyBytes = [System.IO.File]::ReadAllBytes((Join-Path $PackageRoot $RelativePath))
+  $assembly = [System.Reflection.Assembly]::Load($assemblyBytes)
+  $type = $assembly.GetType($TypeName, $true)
+  $method = $type.GetMethod('Quote', [System.Reflection.BindingFlags]'Static,NonPublic')
+  if ($null -eq $method) { throw "$RelativePath does not expose the expected private Quote helper." }
+
+  foreach ($sample in @('C:\DSH Test\', 'C:\测试目录\', 'D:\')) {
+    $actual = [string]$method.Invoke($null, @($sample))
+    $expected = '"' + $sample + '\' + '"'
+    if (-not [string]::Equals($actual, $expected, [System.StringComparison]::Ordinal)) {
+      throw "$RelativePath does not escape a trailing backslash before the closing quote: $sample"
+    }
+  }
+  $plainSample = 'C:\DSH Test\setup.exe'
+  $plainActual = [string]$method.Invoke($null, @($plainSample))
+  if (-not [string]::Equals($plainActual, ('"' + $plainSample + '"'), [System.StringComparison]::Ordinal)) {
+    throw "$RelativePath incorrectly changes a path that has no trailing backslash."
+  }
+  if ($RelativePath -eq 'DSH-Setup.exe' -and
+      $assembly.GetManifestResourceNames() -notcontains 'DSHDesktop.Payload.zip') {
+    throw 'DSH-Setup.exe does not contain the embedded installer payload.'
+  }
+}
+
+Assert-TrailingBackslashQuoting -RelativePath 'DSH-Desktop.exe' -TypeName 'DSHDesktop.Program'
+Assert-TrailingBackslashQuoting -RelativePath 'DSH-Setup.exe' -TypeName 'SetupProgram'
+Assert-TrailingBackslashQuoting -RelativePath 'Uninstall-DSH-Desktop.exe' -TypeName 'UninstallProgram'
+
 $uninstallerMetadata = [System.Text.Encoding]::Unicode.GetString(
   [System.IO.File]::ReadAllBytes((Join-Path $PackageRoot 'Uninstall-DSH-Desktop.exe'))
 )
 foreach ($requiredText in @('RemoveHarness', 'ConfirmExistingHarnessRemoval')) {
   if ($uninstallerMetadata.IndexOf($requiredText, [System.StringComparison]::Ordinal) -lt 0) {
-    throw "Uninstall-DSH-Desktop.exe is missing expected v0.4.2 behavior: $requiredText"
+    throw "Uninstall-DSH-Desktop.exe is missing expected Harness-removal behavior: $requiredText"
   }
 }
 foreach ($relative in @(
@@ -107,12 +141,6 @@ foreach ($relative in @(
     'runtimes\win-x64\native\WebView2Loader.dll',
     'runtimes\win-arm64\native\WebView2Loader.dll'
   )) { Assert-PortableExecutable -RelativePath $relative }
-
-$setupAssemblyBytes = [System.IO.File]::ReadAllBytes((Join-Path $PackageRoot 'DSH-Setup.exe'))
-$setupAssembly = [System.Reflection.Assembly]::ReflectionOnlyLoad($setupAssemblyBytes)
-if ($setupAssembly.GetManifestResourceNames() -notcontains 'DSHDesktop.Payload.zip') {
-  throw 'DSH-Setup.exe does not contain the embedded installer payload.'
-}
 
 $iconBytes = [System.IO.File]::ReadAllBytes((Join-Path $PackageRoot 'assets\deepseek-harness.ico'))
 if ($iconBytes.Length -lt 6 -or [BitConverter]::ToUInt16($iconBytes, 0) -ne 0 -or [BitConverter]::ToUInt16($iconBytes, 2) -ne 1) {

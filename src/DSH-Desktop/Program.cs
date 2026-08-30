@@ -96,7 +96,12 @@ namespace DSHDesktop
             {
                 throw new InvalidOperationException("A path contains an unsupported quote character.");
             }
-            return "\"" + value + "\"";
+            int trailingBackslashes = 0;
+            for (int index = value.Length - 1; index >= 0 && value[index] == '\\'; index--)
+            {
+                trailingBackslashes++;
+            }
+            return "\"" + value + new string('\\', trailingBackslashes) + "\"";
         }
     }
 }
