@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.4.5 - 2026-08-30
+
+- Removed two missed launcher source-package markers (`App.config` and `app.manifest`) during full uninstall.
+- Removed the verified outer installation container when installer-managed app, Harness, and data share that container and it becomes empty.
+- Preserved Git source checkouts, reparse points, drive roots, reused components, and installation folders containing any unrelated files.
+- Added a full-uninstall regression fixture covering managed Harness, data, legacy source markers, launcher files, and the outer folder.
+
 ## 0.4.4 - 2026-08-30
 
 - Fixed uninstall detection when the uninstaller is launched from a different extracted package or source checkout than the configured desktop app.

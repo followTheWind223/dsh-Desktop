@@ -198,6 +198,58 @@ foreach ($requiredScriptText in @('CurrentVersion\Uninstall\DSH Desktop', 'Insta
     throw "Install/uninstall scripts are missing the per-user install record behavior: $requiredScriptText"
   }
 }
+
+$uninstallContainer = Join-Path ([System.IO.Path]::GetTempPath()) ('dsh-full-uninstall-' + [Guid]::NewGuid().ToString('N'))
+try {
+  $uninstallLauncher = Join-Path $uninstallContainer 'dsh-desktop-app'
+  $uninstallHarness = Join-Path $uninstallContainer 'deepseek-harness'
+  $uninstallData = Join-Path $uninstallContainer 'deepseek-harness-data'
+  New-Item -ItemType Directory -Path $uninstallLauncher | Out-Null
+  New-Item -ItemType Directory -Path (Join-Path $uninstallHarness 'apps\cli\src') -Force | Out-Null
+  New-Item -ItemType Directory -Path $uninstallData | Out-Null
+
+  foreach ($relative in @('DSH-Desktop.exe', 'DSH-Setup.exe', 'Uninstall-DSH-Desktop.exe', 'Uninstall.ps1', 'VERSION')) {
+    Copy-Item -LiteralPath (Join-Path $PackageRoot $relative) -Destination (Join-Path $uninstallLauncher $relative)
+  }
+  $legacySourceFolder = Join-Path $uninstallLauncher 'src\DSH-Desktop'
+  New-Item -ItemType Directory -Path $legacySourceFolder -Force | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $legacySourceFolder 'App.config'), '<configuration />')
+  [System.IO.File]::WriteAllText((Join-Path $legacySourceFolder 'app.manifest'), '<assembly />')
+  [System.IO.File]::WriteAllText((Join-Path $uninstallHarness 'package.json'), '{"name":"@deepseek-ai/dsh-root"}')
+  foreach ($relative in @('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps\cli\src\bin.ts')) {
+    [System.IO.File]::WriteAllText((Join-Path $uninstallHarness $relative), '')
+  }
+  $uninstallConfig = [ordered]@{
+    SchemaVersion = 2
+    HarnessDir = $uninstallHarness
+    DataDir = $uninstallData
+    NodePath = 'C:\nodejs\node.exe'
+    HarnessManaged = $true
+    DataManaged = $true
+    NodeManaged = $false
+  } | ConvertTo-Json
+  [System.IO.File]::WriteAllText(
+    (Join-Path $uninstallLauncher 'launcher.config.json'),
+    $uninstallConfig,
+    (New-Object System.Text.UTF8Encoding($false))
+  )
+
+  $uninstallOutput = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $uninstallLauncher 'Uninstall.ps1') `
+    -RemoveConfig -RemoveLauncherFiles -RemoveManagedHarness -RemoveManagedData 2>&1)
+  if ($LASTEXITCODE -ne 0) {
+    throw "The full-uninstall regression fixture failed: $($uninstallOutput -join [Environment]::NewLine)"
+  }
+  if (Test-Path -LiteralPath $uninstallContainer) {
+    throw 'The full uninstaller left its verified empty installation container behind.'
+  }
+} finally {
+  $resolvedUninstallContainer = [System.IO.Path]::GetFullPath($uninstallContainer)
+  $resolvedTemp = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+  if ($resolvedUninstallContainer.StartsWith($resolvedTemp, [System.StringComparison]::OrdinalIgnoreCase) -and
+      (Test-Path -LiteralPath $resolvedUninstallContainer -PathType Container)) {
+    Remove-Item -LiteralPath $resolvedUninstallContainer -Recurse -Force
+  }
+}
 foreach ($relative in @(
     'runtimes\win-x86\native\WebView2Loader.dll',
     'runtimes\win-x64\native\WebView2Loader.dll',

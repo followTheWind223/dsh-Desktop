@@ -148,6 +148,58 @@ function Remove-EmptyDirectory {
   }
 }
 
+function Get-ManagedInstallContainer {
+  param(
+    [Parameter(Mandatory = $true)][string]$LauncherRoot,
+    [AllowNull()][object]$Configuration
+  )
+
+  if ($null -eq $Configuration -or
+      -not [bool]$Configuration.HarnessManaged -or
+      -not [bool]$Configuration.DataManaged) {
+    return $null
+  }
+
+  try {
+    $harness = Get-SafeLocalPath -Value ([string]$Configuration.HarnessDir) -Name 'HarnessDir'
+    $data = Get-SafeLocalPath -Value ([string]$Configuration.DataDir) -Name 'DataDir'
+    if (-not [string]::Equals((Split-Path -Leaf $harness), 'deepseek-harness', [System.StringComparison]::OrdinalIgnoreCase) -or
+        -not [string]::Equals((Split-Path -Leaf $data), 'deepseek-harness-data', [System.StringComparison]::OrdinalIgnoreCase)) {
+      return $null
+    }
+
+    $container = Get-SafeLocalPath -Value (Split-Path -Parent $LauncherRoot) -Name 'install container'
+    foreach ($componentParent in @((Split-Path -Parent $harness), (Split-Path -Parent $data))) {
+      $normalizedParent = Get-SafeLocalPath -Value $componentParent -Name 'component parent'
+      if (-not [string]::Equals($normalizedParent, $container, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $null
+      }
+    }
+    return $container
+  } catch {
+    Write-Warning "The outer installation folder will be preserved because its ownership could not be verified: $($_.Exception.Message)"
+    return $null
+  }
+}
+
+function Remove-EmptyInstallContainer {
+  param([string]$Path)
+
+  if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Container)) { return }
+  $full = Get-SafeLocalPath -Value $Path -Name 'install container'
+  $directoryInfo = Get-Item -LiteralPath $full -Force
+  if (($directoryInfo.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+    Write-Warning "The outer installation folder is a reparse point and was preserved: $full"
+    return
+  }
+  if (@(Get-ChildItem -LiteralPath $full -Force).Count -ne 0) {
+    Write-Verbose "The outer installation folder contains other items and was preserved: $full"
+    return
+  }
+  Remove-Item -LiteralPath $full -Force
+  Write-Output "Removed empty installation folder: $full"
+}
+
 function Remove-KnownLauncherFiles {
   param([Parameter(Mandatory = $true)][string]$LauncherRoot)
   if (-not $RemoveConfig) { throw 'RemoveLauncherFiles requires RemoveConfig.' }
@@ -173,6 +225,7 @@ function Remove-KnownLauncherFiles {
     'runtimes\win-x86\native\WebView2Loader.dll',
     'runtimes\win-x64\native\WebView2Loader.dll',
     'runtimes\win-arm64\native\WebView2Loader.dll',
+    'src\DSH-Desktop\App.config', 'src\DSH-Desktop\app.manifest',
     'src\DSH-Desktop\AppConfiguration.cs', 'src\DSH-Desktop\AssemblyInfo.cs',
     'src\DSH-Desktop\BackendHost.cs', 'src\DSH-Desktop\DiagnosticText.cs',
     'src\DSH-Desktop\DSH-Desktop.csproj', 'src\DSH-Desktop\Localizer.cs',
@@ -230,6 +283,7 @@ try {
   if (($removeHarnessRequested -or $RemoveManagedNode -or $RemoveManagedData) -and $null -eq $config) {
     throw 'Selected components cannot be removed because launcher.config.json is missing.'
   }
+  $installContainer = Get-ManagedInstallContainer -LauncherRoot $launcherRoot -Configuration $config
 
   if ($WaitForProcessId -gt 0) {
     if (-not $RemoveLauncherFiles) { throw 'WaitForProcessId is valid only with RemoveLauncherFiles.' }
@@ -285,6 +339,7 @@ try {
   $remaining = $null
   if ($RemoveLauncherFiles) { $remaining = Remove-KnownLauncherFiles -LauncherRoot $launcherRoot }
   if ($RemoveConfig) { Remove-InstallRecord -LauncherRoot $launcherRoot }
+  if ($RemoveLauncherFiles) { Remove-EmptyInstallContainer -Path $installContainer }
 
   $english = if ($RemoveLauncherFiles -and $remaining -eq -1) {
     'DSH Desktop configuration and shortcuts were removed. The Git source checkout was preserved.'
