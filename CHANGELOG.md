@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.4.2 - 2026-08-30
+
+- Allowed users to explicitly remove a verified existing Harness during uninstall, even when it was reused rather than downloaded by DSH Desktop.
+- Added a path-specific secondary confirmation for Harness deletion, with a stronger warning when the directory may contain user changes.
+- Hardened Harness cleanup with exact directory-name, package-identity, required-marker, launcher-overlap, and reparse-point checks; Harness remains preserved by default.
+- Preserved DSH Desktop Git source checkouts during uninstall so local development repositories are not mistaken for installed payloads.
+
 ## 0.4.1 - 2026-08-28
 
 - Enabled Per-Monitor V2 DPI awareness for the native desktop host so WebView2 renders at the monitor's native scale instead of being bitmap-stretched by Windows.

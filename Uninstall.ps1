@@ -7,6 +7,8 @@ param(
   [switch]$RemoveStartMenuShortcut,
   [switch]$RemoveConfig,
   [switch]$RemoveLauncherFiles,
+  [switch]$RemoveHarness,
+  [switch]$ConfirmExistingHarnessRemoval,
   [switch]$RemoveManagedHarness,
   [switch]$RemoveManagedNode,
   [switch]$RemoveManagedData,
@@ -17,6 +19,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
+$removeHarnessRequested = [bool]($RemoveHarness -or $RemoveManagedHarness)
 
 function Show-UninstallMessage {
   param([string]$Chinese, [string]$English, [System.Windows.Forms.MessageBoxIcon]$Icon)
@@ -66,11 +69,30 @@ function Remove-OwnedDirectory {
     throw "Refusing to remove a component with an unexpected directory name: $full"
   }
   if (-not (Test-Path -LiteralPath $full -PathType Container)) { return }
+  $directoryInfo = Get-Item -LiteralPath $full -Force
+  if (($directoryInfo.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+    throw "Refusing to remove a component through a reparse point: $full"
+  }
   foreach ($marker in $RequiredMarkers) {
-    if (-not (Test-Path -LiteralPath (Join-Path $full $marker))) { throw "Refusing component removal because a marker is missing: $marker" }
+    if (-not (Test-Path -LiteralPath (Join-Path $full $marker) -PathType Leaf)) { throw "Refusing component removal because a marker is missing: $marker" }
   }
   Remove-Item -LiteralPath $full -Recurse -Force
-  Write-Output "Removed managed component: $full"
+  Write-Output "Removed selected component: $full"
+}
+
+function Assert-HarnessIdentity {
+  param([Parameter(Mandatory = $true)][string]$Path)
+  $full = Get-SafeLocalPath -Value $Path -Name 'HarnessDir'
+  if (-not (Test-Path -LiteralPath $full -PathType Container)) { return }
+  $packagePath = Join-Path $full 'package.json'
+  try {
+    $package = Get-Content -LiteralPath $packagePath -Raw -Encoding UTF8 | ConvertFrom-Json
+  } catch {
+    throw 'Refusing Harness removal because package.json is invalid.'
+  }
+  if (-not [string]::Equals([string]$package.name, '@deepseek-ai/dsh-root', [System.StringComparison]::Ordinal)) {
+    throw 'Refusing Harness removal because the package identity is not @deepseek-ai/dsh-root.'
+  }
 }
 
 function Remove-OwnedNode {
@@ -129,6 +151,10 @@ function Remove-EmptyDirectory {
 function Remove-KnownLauncherFiles {
   param([Parameter(Mandatory = $true)][string]$LauncherRoot)
   if (-not $RemoveConfig) { throw 'RemoveLauncherFiles requires RemoveConfig.' }
+  if (Test-Path -LiteralPath (Join-Path $LauncherRoot '.git')) {
+    Write-Verbose "Preserved DSH Desktop source checkout: $LauncherRoot"
+    return -1
+  }
   foreach ($marker in @('DSH-Desktop.exe', 'DSH-Setup.exe', 'Uninstall-DSH-Desktop.exe', 'VERSION')) {
     if (-not (Test-Path -LiteralPath (Join-Path $LauncherRoot $marker) -PathType Leaf)) {
       throw "Refusing launcher cleanup because a package marker is missing: $marker"
@@ -181,8 +207,8 @@ try {
     $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ([int]$config.SchemaVersion -ne 2) { throw 'The launcher configuration schema is invalid.' }
   }
-  if (($RemoveManagedHarness -or $RemoveManagedNode -or $RemoveManagedData) -and $null -eq $config) {
-    throw 'Managed components cannot be removed because launcher.config.json is missing.'
+  if (($removeHarnessRequested -or $RemoveManagedNode -or $RemoveManagedData) -and $null -eq $config) {
+    throw 'Selected components cannot be removed because launcher.config.json is missing.'
   }
 
   if ($WaitForProcessId -gt 0) {
@@ -212,9 +238,16 @@ try {
     Remove-OwnedShortcut -Path (Get-SafeLocalPath -Value $ShortcutPath -Name 'ShortcutPath') -ExpectedTarget $entryExecutable
   }
 
-  if ($RemoveManagedHarness) {
-    if (-not [bool]$config.HarnessManaged) { throw 'Harness is not marked as installer-managed; it will not be removed.' }
-    Remove-OwnedDirectory -Path ([string]$config.HarnessDir) -ExpectedLeaf 'deepseek-harness' -LauncherRoot $launcherRoot -RequiredMarkers @('package.json', 'apps\cli\src\bin.ts')
+  if ($removeHarnessRequested) {
+    $harnessManaged = [bool]$config.HarnessManaged
+    if ($RemoveManagedHarness -and -not $harnessManaged) {
+      throw 'Harness is not marked as installer-managed; use the interactive uninstaller to confirm removal of an existing Harness.'
+    }
+    if (-not $harnessManaged -and -not $ConfirmExistingHarnessRemoval) {
+      throw 'Removing an existing Harness requires explicit confirmation.'
+    }
+    Assert-HarnessIdentity -Path ([string]$config.HarnessDir)
+    Remove-OwnedDirectory -Path ([string]$config.HarnessDir) -ExpectedLeaf 'deepseek-harness' -LauncherRoot $launcherRoot -RequiredMarkers @('package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps\cli\src\bin.ts')
   }
   if ($RemoveManagedNode) {
     if (-not [bool]$config.NodeManaged) { throw 'Node.js is not marked as installer-managed; it will not be removed.' }
@@ -232,12 +265,16 @@ try {
   $remaining = $null
   if ($RemoveLauncherFiles) { $remaining = Remove-KnownLauncherFiles -LauncherRoot $launcherRoot }
 
-  $english = if ($RemoveLauncherFiles -and $remaining -eq 0) {
+  $english = if ($RemoveLauncherFiles -and $remaining -eq -1) {
+    'DSH Desktop configuration and shortcuts were removed. The Git source checkout was preserved.'
+  } elseif ($RemoveLauncherFiles -and $remaining -eq 0) {
     'DSH Desktop was removed. Components that were not explicitly selected were preserved.'
   } elseif ($RemoveLauncherFiles) {
     "Known DSH Desktop files were removed. The folder was kept because it contains $remaining unrecognized item(s)."
   } else { 'Selected shortcuts and configuration were removed.' }
-  $chinese = if ($RemoveLauncherFiles -and $remaining -eq 0) {
+  $chinese = if ($RemoveLauncherFiles -and $remaining -eq -1) {
+    '已删除 DSH Desktop 配置和快捷方式，并保留 Git 源码仓库。'
+  } elseif ($RemoveLauncherFiles -and $remaining -eq 0) {
     'DSH Desktop 已卸载。未明确勾选的组件均已保留。'
   } elseif ($RemoveLauncherFiles) {
     "已删除已知桌面端文件。目录中仍有 $remaining 个未识别项目，因此保留了该目录。"

@@ -57,6 +57,19 @@ foreach ($script in (Get-ChildItem -LiteralPath $PackageRoot -Filter '*.ps1' -Fi
   }
 }
 
+$uninstallScriptText = Get-Content -LiteralPath (Join-Path $PackageRoot 'Uninstall.ps1') -Raw -Encoding UTF8
+foreach ($requiredPattern in @(
+    '\[switch\]\$RemoveHarness',
+    '\[switch\]\$ConfirmExistingHarnessRemoval',
+    '@deepseek-ai/dsh-root',
+    'ReparsePoint',
+    'Join-Path \$LauncherRoot ''\.git'''
+  )) {
+  if ($uninstallScriptText -notmatch $requiredPattern) {
+    throw "Uninstall.ps1 is missing a required Harness-removal safety check: $requiredPattern"
+  }
+}
+
 $version = (Get-Content -LiteralPath (Join-Path $PackageRoot 'VERSION') -Raw).Trim()
 if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'VERSION is invalid.' }
 $expectedFileVersion = $version + '.0'
@@ -80,6 +93,14 @@ function Assert-PortableExecutable {
 
 foreach ($relative in @('DSH-Desktop.exe', 'DSH-Setup.exe', 'Uninstall-DSH-Desktop.exe')) {
   Assert-PortableExecutable -RelativePath $relative -ExpectedVersion $expectedFileVersion
+}
+$uninstallerMetadata = [System.Text.Encoding]::Unicode.GetString(
+  [System.IO.File]::ReadAllBytes((Join-Path $PackageRoot 'Uninstall-DSH-Desktop.exe'))
+)
+foreach ($requiredText in @('RemoveHarness', 'ConfirmExistingHarnessRemoval')) {
+  if ($uninstallerMetadata.IndexOf($requiredText, [System.StringComparison]::Ordinal) -lt 0) {
+    throw "Uninstall-DSH-Desktop.exe is missing expected v0.4.2 behavior: $requiredText"
+  }
 }
 foreach ($relative in @(
     'runtimes\win-x86\native\WebView2Loader.dll',

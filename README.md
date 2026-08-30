@@ -8,7 +8,7 @@ DSH Desktop 是一个面向 Windows 10/11 的非官方开源 DeepSeek Harness �
 
 For approved signed releases: Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Releases published before the signing integration is approved remain unsigned and are identified as such in the release documentation. See the full [Code signing policy](CODE_SIGNING_POLICY.md) and [Privacy policy](PRIVACY.md).
 
-## v0.4.1 主要功能
+## v0.4.2 主要功能
 
 - 高 DPI 清晰渲染：启用 Per-Monitor V2，在 125%、150%、175% 等 Windows 缩放比例下按显示器原生像素重绘 WebView2，避免系统位图拉伸造成文字发虚。
 
@@ -19,7 +19,7 @@ For approved signed releases: Free code signing provided by [SignPath.io](https:
 - 便携 Node.js：仅在用户选择或没有兼容版本时，从 `nodejs.org` 下载官方 ZIP，校验官方 SHA-256，不修改系统 `PATH`。
 - 双语界面：默认跟随 Windows 自动切换简体中文/English，也可手动指定。
 - 可选入口：即使不创建任何快捷方式，也可以从安装目录运行 `DSH-Desktop.exe`。
-- 安全卸载：默认只删除桌面端、配置和快捷方式；Harness、Node.js 和数据必须由用户单独勾选，而且只允许删除安装器自己创建并记录的组件。
+- 安全卸载：默认只删除桌面端、配置和快捷方式；用户可选择是否删除 Harness，已有 Harness 会显示完整路径并要求二次确认；便携 Node.js 和数据仍只允许删除安装器自己创建并记录的组件。
 - 单文件与便携包：Release 同时提供一个安装器 EXE 和一个可完整解压运行的 ZIP。
 
 ## 下载与安装
@@ -86,7 +86,9 @@ API Key 或登录凭据仍由 Harness 自己的界面处理。DSH Desktop 不硬
 - 本项目创建的桌面与开始菜单快捷方式；
 - 已知的桌面端脚本、运行库和文档。
 
-Harness、便携 Node.js 和用户数据默认保留。只有它们确实由当前安装器创建并记录时，对应复选框才可用；删除用户数据还需要二次确认。目录中的未知文件永远不会被清理脚本删除。
+Harness、便携 Node.js 和用户数据默认保留。Harness 只要通过目录名、项目标识和关键文件校验就可由用户选择删除；若它是安装前已经存在或被复用的目录，卸载器会显示完整路径并明确提醒其中可能包含用户修改，确认后才会删除。便携 Node.js 和用户数据仍只有在当前安装器创建并记录时才可选择，删除数据也需要二次确认。桌面端安装目录内未识别的项目不会被清理脚本删除。
+
+如果卸载器位于带有 `.git` 元数据的 DSH Desktop 源码仓库中，它只会删除配置和快捷方式，不会删除源码仓库，方便开发者安全测试安装与卸载流程。
 
 ## PowerShell 自动化
 
