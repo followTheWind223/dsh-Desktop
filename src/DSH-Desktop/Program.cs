@@ -69,8 +69,8 @@ namespace DSHDesktop
             {
                 MessageBox.Show(
                     localizer.Text(
-                        "尚未配置 DSH Desktop，并且当前文件夹中缺少 DSH-Setup.exe。请重新解压完整安装包。",
-                        "DSH Desktop is not configured and DSH-Setup.exe is missing. Extract the complete package and try again."
+                        "DSH Desktop 的配置缺失。请重新运行安装程序进行修复。",
+                        "DSH Desktop configuration is missing. Run the installer again to repair the installation."
                     ),
                     "DSH Desktop",
                     MessageBoxButtons.OK,

@@ -1,36 +1,38 @@
 # Contributing
 
-感谢你帮助改进这个非官方 Windows 启动器。
+感谢你帮助改进 DSH Desktop。
 
 ## 提交前
 
-1. 不要把 `launcher.config.json`、API Key、信任 URL、会话数据或本机路径配置提交到 Git。
-2. 修改 C# 桌面宿主或卸载器后，使用 .NET SDK 8 与 Windows PowerShell 5.1 重新构建：
+1. 不要提交 `launcher.config.json`、API Key、会话数据、本机绝对路径、证书私钥或 `artifacts` 构建产物。
+2. 不要手工修改 `runtime/package-lock.json`。升级 Harness 时应同时更新 `runtime/package.json`、lockfile、`runtime/runtime.lock.json`、变更日志和第三方声明。
+3. 新增或改变依赖生命周期脚本时，必须先审查具体包版本和脚本文本，再更新 `Build-BundledRuntime.ps1` 的精确允许列表。
+4. 安装器不得修改全局 PATH，不得覆盖源码仓库，不得把 API Key 写入配置。
 
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Exe.ps1
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Setup.ps1 `
-     -PayloadDirectory . -OutputPath .\DSH-Setup.exe
-   ```
+## 构建与验证
 
-3. 运行发布检查：
+```powershell
+.\Install-BuildTools.ps1
 
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\Test-Release.ps1
-   ```
+.\Build-BundledRuntime.ps1 -Architecture win-x64 `
+  -OutputDirectory .\artifacts\bundled-runtime-win-x64 `
+  -DotNetPath .\artifacts\tools\dotnet\dotnet.exe -Force
 
-4. 修改安装流程时，至少测试一个新的隔离目录，并验证已有目标目录不会被覆盖。
-5. 修改进程逻辑时，验证后端只监听回环地址；关闭原生桌面窗口后，启动器创建的 Node/WebView2 进程与临时配置目录均被清理，其他进程不受影响。
-6. 修改便携 Node.js 下载时，验证官方主机白名单、LTS 选择、SHA-256、ZIP 路径边界、失败清理和全局环境不变。
-7. 修改一键卸载时，在隔离副本中验证已知文件被删除、用户额外文件被保留，默认保留 Harness/数据/Node.js；仅安装器拥有且用户明确勾选的组件可被删除。
+.\Build-BundledSetup.ps1 `
+  -BundleDirectory .\artifacts\bundled-runtime-win-x64 `
+  -Architecture win-x64 `
+  -OutputDirectory .\artifacts\release `
+  -InnoCompilerPath '.\artifacts\tools\Inno Setup 6\ISCC.exe'
+```
 
-## Pull Request
+涉及安装流程的 PR 至少验证：
 
-- 说明问题、解决方案、测试目录和验证结果。
-- 安装器必须固定官方仓库地址，校验用户路径，并在运行上游依赖脚本前取得明确确认。
-- 保持默认不覆盖已有源码、配置或快捷方式；覆盖必须通过显式参数授权。
-- 不增加全局环境变量修改、凭据落盘、非回环监听或自动强制依赖修复。
-- 修改任一 EXE 时必须同时提交对应 C# 源码，且三个二进制版本都应与 `VERSION` 一致。
-- 新增第三方代码或素材时，同步更新许可证与 `THIRD_PARTY_NOTICES.md`。
+- 新目录静默安装成功，配置路径全部位于所选目录；
+- 已有 WebView2 时不会重复安装；
+- Harness 启动后只监听 loopback；
+- 关闭桌面端后内置 Node 进程退出；
+- 升级/修复不会删除 `data`；
+- 卸载删除桌面端和内置 runtime，默认保留数据；
+- 源码仓库目录会被安装器拒绝。
 
-安全问题请按 [SECURITY.md](SECURITY.md) 私下报告，不要在公开 Issue 中放入利用细节或敏感数据。
+安全问题请使用仓库的私有安全报告入口，不要在公开 Issue 中附上真实凭据或可利用细节。

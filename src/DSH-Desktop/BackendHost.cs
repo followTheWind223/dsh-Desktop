@@ -34,10 +34,16 @@ namespace DSHDesktop
             ThrowIfDisposed();
             await ValidateNodeAsync(cancellationToken).ConfigureAwait(false);
 
+            string entryArguments = Quote(_configuration.HarnessEntryPath);
+            if (_configuration.HarnessEntryRequiresTsx)
+            {
+                entryArguments = "--import tsx/esm " + entryArguments;
+            }
+
             ProcessStartInfo startInfo = new ProcessStartInfo
             {
                 FileName = _configuration.NodePath,
-                Arguments = "--import tsx/esm apps/cli/src/bin.ts web --no-open --host 127.0.0.1 --port 0",
+                Arguments = entryArguments + " web --no-open --host 127.0.0.1 --port 0",
                 WorkingDirectory = _configuration.HarnessDir,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -138,6 +144,20 @@ namespace DSHDesktop
                 "等待 DeepSeek Harness 启动超时。",
                 "Timed out while waiting for DeepSeek Harness to start."
             ) + details);
+        }
+
+        private static string Quote(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value) || value.IndexOf('"') >= 0)
+            {
+                throw new InvalidOperationException("A Harness entry path contains unsupported characters.");
+            }
+            int trailingBackslashes = 0;
+            for (int index = value.Length - 1; index >= 0 && value[index] == '\\'; index--)
+            {
+                trailingBackslashes++;
+            }
+            return "\"" + value + new string('\\', trailingBackslashes) + "\"";
         }
 
         public static bool IsTrustedLaunchUri(Uri uri)

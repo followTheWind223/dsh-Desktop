@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.5.0 - 2026-09-01
+
+- Replaced the source-clone/PowerShell SFX flow with a standard single-file Inno Setup installer.
+- Bundled the locked official `@deepseek-ai/dsh@0.1.2-alpha.3` production package and private Node.js `v24.20.0` runtime, so end users no longer need Git, Node.js, pnpm, or a source build.
+- Added runtime provenance locks, Node.js SHA-256 verification, reviewed lifecycle-script allowlisting, production dependency auditing, and a generated runtime manifest.
+- Added Chinese/English installation, user-selected destination, optional desktop shortcut, Start menu/uninstall entries, repair/upgrade support, and source-checkout overwrite protection.
+- Bundled the Microsoft-signed WebView2 Evergreen Bootstrapper and fixed WebView2 detection across HKLM/HKCU 32-bit and 64-bit registry views.
+- Made uninstall remove DSH Desktop, bundled Harness, and bundled Node.js together while preserving user data by default and offering an explicit interactive data-removal choice.
+- Added real install, Harness launch, loopback listener, process cleanup, repair, and uninstall regression validation for the x64 package.
+
 ## 0.4.5 - 2026-08-30
 
 - Removed two missed launcher source-package markers (`App.config` and `app.manifest`) during full uninstall.

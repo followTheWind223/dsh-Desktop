@@ -9,6 +9,7 @@ launcher.config.json
 *.tmp
 *.zip
 /artifacts/
+/runtime/node_modules/
 **/bin/
 **/obj/
 .DS_Store

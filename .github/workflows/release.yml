@@ -23,9 +23,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Build and validate release package
+      - name: Install verified local build tools
         shell: powershell
-        run: .\Build-Release.ps1 -Tag $env:GITHUB_REF_NAME
+        run: .\Install-BuildTools.ps1
+
+      - name: Build and validate bundled release
+        shell: powershell
+        run: |
+          .\Build-Release.ps1 -Tag $env:GITHUB_REF_NAME -Architecture win-x64 `
+            -DotNetPath .\artifacts\tools\dotnet\dotnet.exe `
+            -InnoCompilerPath '.\artifacts\tools\Inno Setup 6\ISCC.exe'
 
       - name: Create or update GitHub Release
         shell: powershell
@@ -35,9 +42,9 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $tag = $env:GITHUB_REF_NAME
           $repository = $env:GITHUB_REPOSITORY
-          $assets = @(Get-ChildItem -LiteralPath .\artifacts -File | Sort-Object Name)
+          $assets = @(Get-ChildItem -LiteralPath .\artifacts\release -File | Sort-Object Name)
           if ($assets.Count -lt 3) {
-            throw "Expected the setup EXE, portable ZIP, and checksum manifest; found $($assets.Count) assets."
+            throw "Expected the setup EXE, runtime manifest, and checksum manifest; found $($assets.Count) assets."
           }
           $assetPaths = @($assets | ForEach-Object { $_.FullName })
 

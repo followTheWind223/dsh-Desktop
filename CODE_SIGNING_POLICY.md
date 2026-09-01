@@ -9,8 +9,8 @@ Releases published before the SignPath integration is approved remain unsigned a
 Only binaries maintained and built by the DSH Desktop project are eligible for signing:
 
 - `DSH-Desktop.exe`
-- `DSH-Setup.exe`
-- `Uninstall-DSH-Desktop.exe`
+- `DSH-Desktop-Setup-v<version>-win-<architecture>.exe`
+- the Inno Setup-generated uninstaller embedded in the setup package
 
 The project does not sign DeepSeek Harness, Microsoft WebView2 components, Node.js, or any other third-party binary. Those components retain their upstream identity and signatures, when present.
 

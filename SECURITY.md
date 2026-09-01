@@ -2,59 +2,46 @@
 
 ## Supported versions
 
-Only the latest release of this launcher is supported. DeepSeek Harness itself is a separate upstream project and currently identifies as a developer preview.
+Only the latest DSH Desktop release is supported. DeepSeek Harness is a separate upstream developer-preview project.
 
-## Threat model
+## Release supply chain
 
-The launcher assumes the following local components are trusted:
+- The end-user installer does not clone a repository or run a package manager.
+- The build uses the exact Harness npm version and integrity recorded in `runtime/runtime.lock.json` and `runtime/package-lock.json`.
+- Node.js archives are downloaded only from `https://nodejs.org/dist/` and must match committed SHA-256 values.
+- Dependency lifecycle scripts are disabled during installation, then only the exact reviewed scripts for `@deepseek-ai/dsh-subprocess-local`, `koffi`, and `node-pty` are rebuilt.
+- Production dependencies are audited without automatic remediation.
+- The WebView2 Evergreen Bootstrapper must have a valid Microsoft Corporation Authenticode signature.
+- The Inno Setup compiler used by project scripts must have a valid Pyrsys B.V. Authenticode signature.
+- A generated runtime manifest records the DSH Desktop version, architecture, upstream Harness commit/package identity, Node archive hash, entry hashes, and WebView2 publisher.
 
-- this launcher directory and its `launcher.config.json` file;
-- the configured DeepSeek Harness source checkout and installed dependencies;
-- the configured `node.exe` and installed Microsoft WebView2 Runtime;
-- the current Windows user account.
+## Runtime boundaries
 
-First-run setup additionally trusts the official DeepSeek Harness GitHub repository, the exact commit cloned from it, the package-manager version declared by that commit, its lockfile, and the registries referenced by that lockfile.
+- The bundled Node.js runtime is private to the installation and is never added to PATH.
+- Harness is forced to `127.0.0.1` on a random port.
+- The launcher accepts only a strict loopback URL with a bounded token format.
+- Diagnostics redact local trust tokens and common API-key formats.
+- WebView2 disables developer tools, password saving, autofill, permission grants, default context menus, and untrusted in-window navigation.
+- The Node process tree is assigned to a Windows Job Object with `KILL_ON_JOB_CLOSE`.
+- `launcher.config.json` contains paths, language, and ownership flags only. It must never contain credentials.
 
-When the user opts into portable Node.js installation, setup additionally trusts `https://nodejs.org/dist/`, its release index, checksum manifest, and selected LTS ZIP.
+## Installer and uninstall boundaries
 
-When WebView2 is missing, setup downloads Microsoft's Evergreen Bootstrapper and requires a valid Microsoft Authenticode signature before executing it.
-
-It is designed to reduce accidental exposure to the network and accidental termination of unrelated processes. It does not defend against malware or another process already running with the same user's privileges.
-
-## Security boundaries
-
-- Setup uses a hard-coded HTTPS URL for the official DeepSeek Harness repository and verifies the cloned `origin` and 40-character commit hash.
-- User-selected installation roots must be absolute local-drive paths. Network paths are rejected. Existing Harness directories are adopted only after source-layout and official Git-origin verification.
-- Portable Node.js is downloaded only from the exact `nodejs.org` HTTPS host. Setup selects a compatible official LTS ZIP, enforces x64/ARM64 and size/path boundaries, and verifies SHA-256 against that release's official `SHASUMS256.txt` before extraction.
-- Portable Node.js stays under the user-selected root and is referenced by absolute path. Setup does not add it to the user or machine `PATH`.
-- Non-interactive full installation requires `-AcceptUpstreamScripts`; interactive installation displays the exact repository and target paths before cloning or running dependencies.
-- Setup accepts only a strict `pnpm@<semver>` package-manager declaration, uses `--frozen-lockfile`, and relies on the upstream workspace's strict dependency-build allowlist.
-- Setup runs the native pnpm audit and warns on high-severity findings. It never runs forced remediation or changes the upstream lockfile.
-- The Harness server is forced to `127.0.0.1` on a random port.
-- Only a strict loopback trust URL is accepted from Harness output.
-- Trust tokens and API keys are never written by the launcher to disk.
-- Diagnostic text is truncated and redacts the trust token and common `sk-...` keys.
-- WebView2 disables developer tools, password saving, autofill, permission grants, default context menus, and in-window navigation outside the exact loopback origin.
-- The temporary WebView2 user-data folder is created under `<DataDir>\desktop-launcher` and removed only after validating its exact parent and per-process name.
-- The Node process is assigned to a Windows Job Object with `KILL_ON_JOB_CLOSE`, so its process tree is terminated with the desktop host.
-- Installer inputs must be absolute paths. Existing configuration and shortcuts are not replaced without `-Force`.
-- The uninstaller validates shortcut ownership. Harness, portable Node.js, and data are preserved by default and can be selected only when the configuration records them as installer-managed; data deletion requires secondary confirmation.
-- One-click launcher removal waits for and validates its own uninstaller process, verifies package markers, and deletes only a fixed allowlist of launcher files. Unknown files and Git metadata are retained.
+- The user chooses the destination; source checkouts are rejected to avoid overwriting project files.
+- Installation is per-user by default and does not require elevation.
+- The fixed Inno Setup AppId supports repair and in-place upgrades.
+- Uninstall always removes the DSH Desktop program and its bundled Harness/Node runtime.
+- User data is preserved by default. Interactive deletion requires an explicit Yes response; silent uninstall always preserves it.
+- Recursive data deletion is limited to the exact `{app}\data` path and refuses reparse points.
 
 ## Known limitations
 
-The included executables are reproducibly buildable from the included C# source but are not Authenticode-signed. Windows SmartScreen may identify them as unknown publishers. Review the source and run `Build-Exe.ps1` locally if this is unacceptable.
+Unsigned builds can trigger browser, antivirus, or SmartScreen reputation warnings. A self-signed certificate does not establish public trust. Until the SignPath integration is approved, verify Release SHA-256 checksums or build from reviewed source.
 
-Portable Node.js setup verifies the ZIP against `SHASUMS256.txt` delivered by the same official HTTPS release host. It does not currently verify the OpenPGP signature on the checksum manifest. Higher-assurance users should follow the Node.js project's binary-signature verification instructions or install a separately verified Node.js runtime and select its `node.exe`.
+The runtime necessarily executes the bundled upstream Harness and its production dependencies. Review `runtime/runtime.lock.json`, the generated runtime manifest, and upstream safety documentation before sensitive use.
 
-The default setup follows the current upstream default branch, which can change. Higher-assurance deployments should pass a reviewed branch or tag through `-HarnessRef`, record the resulting commit printed by setup, and review upstream changes before updating.
-
-Dependency auditing can report upstream advisories. Setup displays a warning but does not modify DeepSeek Harness dependencies or claim that reported code is unreachable. Review the audit output and the upstream project's response before sensitive use.
-
-The local trust URL is passed to the WebView2 control in process memory. Another process with the same Windows user's privileges can still inspect memory or interfere with the local session. Do not run untrusted software in the same account while handling sensitive sessions.
-
-The launcher runs code from the configured Harness checkout and its `node_modules`. Review updates, use the official upstream repository, and pin a known commit for higher-assurance deployments.
+Another process running as the same Windows user can inspect or interfere with local process memory and loopback traffic. Do not handle sensitive sessions alongside untrusted software in the same account.
 
 ## Reporting a vulnerability
 
-Do not include real API keys, trust URLs, private prompts, or session data in a report. Prefer the repository's [private vulnerability reporting page](https://github.com/followTheWind223/dsh-Desktop/security/advisories/new). If that feature is unavailable, open a minimal issue requesting private contact without disclosing exploit details or sensitive data.
+Use the repository's [private vulnerability reporting page](https://github.com/followTheWind223/dsh-Desktop/security/advisories/new). Do not include real API keys, trust URLs, private prompts, or session data in public issues.

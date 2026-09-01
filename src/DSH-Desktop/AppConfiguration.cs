@@ -15,6 +15,12 @@ namespace DSHDesktop
         public bool DataManaged { get; set; }
         public bool NodeManaged { get; set; }
 
+        [ScriptIgnore]
+        public string HarnessEntryPath { get; private set; }
+
+        [ScriptIgnore]
+        public bool HarnessEntryRequiresTsx { get; private set; }
+
         public static LauncherConfiguration Load(string path)
         {
             string json;
@@ -45,6 +51,14 @@ namespace DSHDesktop
 
         public void Validate(Localizer localizer)
         {
+            if (SchemaVersion != 2)
+            {
+                throw new InvalidOperationException(localizer.Text(
+                    "启动配置版本不受支持，请重新运行安装程序。",
+                    "The launcher configuration version is unsupported. Run the installer again."
+                ));
+            }
+
             HarnessDir = RequireAbsolutePath(HarnessDir, "HarnessDir", true, localizer);
             DataDir = RequireAbsolutePath(DataDir, "DataDir", true, localizer);
             NodePath = RequireAbsolutePath(NodePath, "NodePath", false, localizer);
@@ -57,9 +71,25 @@ namespace DSHDesktop
                 ));
             }
 
+            string packagedEntry = Path.Combine(
+                HarnessDir,
+                "node_modules",
+                "@deepseek-ai",
+                "dsh",
+                "lib",
+                "bin.js"
+            );
+            string sourceEntry = Path.Combine(HarnessDir, "apps", "cli", "src", "bin.ts");
+            if (File.Exists(packagedEntry))
+            {
+                HarnessEntryPath = packagedEntry;
+                HarnessEntryRequiresTsx = false;
+                return;
+            }
+
             string[] requiredHarnessPaths =
             {
-                Path.Combine(HarnessDir, "apps", "cli", "src", "bin.ts"),
+                sourceEntry,
                 Path.Combine(HarnessDir, "apps", "web", "dist", "index.html"),
                 Path.Combine(HarnessDir, "node_modules", "tsx", "package.json")
             };
@@ -73,6 +103,8 @@ namespace DSHDesktop
                     ));
                 }
             }
+            HarnessEntryPath = sourceEntry;
+            HarnessEntryRequiresTsx = true;
         }
 
         private static string RequireAbsolutePath(
