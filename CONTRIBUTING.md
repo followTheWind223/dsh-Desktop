@@ -21,8 +21,7 @@
 .\Build-BundledSetup.ps1 `
   -BundleDirectory .\artifacts\bundled-runtime-win-x64 `
   -Architecture win-x64 `
-  -OutputDirectory .\artifacts\release `
-  -InnoCompilerPath '.\artifacts\tools\Inno Setup 6\ISCC.exe'
+  -OutputDirectory .\artifacts\release
 ```
 
 涉及安装流程的 PR 至少验证：

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.5.1 - 2026-09-01
+
+- Fixed GitHub-hosted Windows Release builds by reusing an existing verified Inno Setup installation when available.
+- Added bounded post-install discovery across the project-local, per-user, and Program Files locations used by Inno Setup.
+- Removed the workflow's incorrect assumption that Inno Setup always installs into `artifacts\tools`.
+
 ## 0.5.0 - 2026-09-01
 
 - Replaced the source-clone/PowerShell SFX flow with a standard single-file Inno Setup installer.

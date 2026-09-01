@@ -31,8 +31,7 @@ jobs:
         shell: powershell
         run: |
           .\Build-Release.ps1 -Tag $env:GITHUB_REF_NAME -Architecture win-x64 `
-            -DotNetPath .\artifacts\tools\dotnet\dotnet.exe `
-            -InnoCompilerPath '.\artifacts\tools\Inno Setup 6\ISCC.exe'
+            -DotNetPath .\artifacts\tools\dotnet\dotnet.exe
 
       - name: Create or update GitHub Release
         shell: powershell

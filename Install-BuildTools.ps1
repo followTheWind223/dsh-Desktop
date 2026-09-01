@@ -29,7 +29,15 @@ $toolsRoot = Join-Path $PSScriptRoot 'artifacts\tools'
 $dotnetRoot = Join-Path $toolsRoot 'dotnet'
 $dotnetPath = Join-Path $dotnetRoot 'dotnet.exe'
 $innoRoot = Join-Path $toolsRoot 'Inno Setup 6'
-$innoPath = Join-Path $innoRoot 'ISCC.exe'
+$innoCandidates = @(
+  (Join-Path $innoRoot 'ISCC.exe'),
+  (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'),
+  (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+  (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
+)
+$innoPath = $innoCandidates |
+  Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path -LiteralPath $_ -PathType Leaf) } |
+  Select-Object -First 1
 [void](New-Item -ItemType Directory -Path $toolsRoot -Force)
 
 if ($Force -or -not (Test-Path -LiteralPath $dotnetPath -PathType Leaf) -or
@@ -43,7 +51,7 @@ if ($Force -or -not (Test-Path -LiteralPath $dotnetPath -PathType Leaf) -or
   }
 }
 
-if ($Force -or -not (Test-Path -LiteralPath $innoPath -PathType Leaf)) {
+if ($Force -or [string]::IsNullOrWhiteSpace($innoPath)) {
   $innoInstaller = Join-Path $toolsRoot 'innosetup-6.7.3.exe'
   Invoke-OfficialDownload `
     -Uri ([uri]'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe') `
@@ -58,9 +66,27 @@ if ($Force -or -not (Test-Path -LiteralPath $innoPath -PathType Leaf)) {
     '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', '/NOICONS',
     ('/DIR=' + $innoRoot)
   )
-  if (-not (Test-Path -LiteralPath $innoPath -PathType Leaf)) {
+  $deadline = (Get-Date).AddSeconds(60)
+  do {
+    $innoPath = $innoCandidates |
+      Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path -LiteralPath $_ -PathType Leaf) } |
+      Select-Object -First 1
+    if (-not [string]::IsNullOrWhiteSpace($innoPath)) { break }
+    Start-Sleep -Milliseconds 500
+  } while ((Get-Date) -lt $deadline)
+  if ([string]::IsNullOrWhiteSpace($innoPath)) {
     throw 'Inno Setup installation failed.'
   }
+}
+
+$innoInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($innoPath)
+$innoSignature = Get-AuthenticodeSignature -LiteralPath $innoPath
+if ($innoInfo.FileDescription -ne 'Inno Setup Command-Line Compiler' -or
+    $innoInfo.ProductName -ne 'Inno Setup' -or
+    $innoSignature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+    $null -eq $innoSignature.SignerCertificate -or
+    $innoSignature.SignerCertificate.Subject -notmatch '(?i)(^|,\s*)O=Pyrsys B\.V\.(,|$)') {
+  throw 'The discovered Inno Setup compiler is not Authenticode-verified as Pyrsys B.V.'
 }
 
 Write-Output "DotNetPath:        $dotnetPath"

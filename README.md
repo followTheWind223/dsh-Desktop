@@ -93,8 +93,7 @@ API Key 和登录凭据由 Harness 自己的界面处理。安装器和桌面启
 .\Install-BuildTools.ps1
 
 .\Build-Release.ps1 -Architecture win-x64 `
-  -DotNetPath .\artifacts\tools\dotnet\dotnet.exe `
-  -InnoCompilerPath '.\artifacts\tools\Inno Setup 6\ISCC.exe'
+  -DotNetPath .\artifacts\tools\dotnet\dotnet.exe
 ```
 
 正式产物位于 `artifacts\release`：
